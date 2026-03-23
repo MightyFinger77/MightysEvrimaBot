@@ -44,6 +44,16 @@ population_dashboard:
   channel_id: 0
   interval_minutes: 5
 
+# Optional: RCON wipecorpses on a timer (0 = off). Same command as /evrima-admin wipecorpses.
+# Timing is from JVM start (not persisted across restarts). With warn_before_minutes: 5 and
+# interval_minutes: 120, the first in-game announce is at ~115 min, wipe at ~120 min, then repeats.
+scheduled_wipecorpses:
+  interval_minutes: 0
+  # In-game announce (RCON announce) this many minutes before each wipe. 0 = no warning.
+  # Must be less than interval_minutes or the warning is skipped (logged once at startup).
+  warn_before_minutes: 5
+  announce_message: "5 minutes until corpse wipe, eat up!"
+
 # Optional: server log file for future chat/kill parsers (not wired in v1).
 # logs:
 #   server_log_path: "D:/TheIsle/Evrima/Saved/Logs/TheIsle.log"

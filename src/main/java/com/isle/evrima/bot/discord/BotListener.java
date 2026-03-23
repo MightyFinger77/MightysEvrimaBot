@@ -4,6 +4,8 @@ import com.isle.evrima.bot.config.BotConfig;
 import com.isle.evrima.bot.db.Database;
 import com.isle.evrima.bot.ecosystem.EcosystemEmbeds;
 import com.isle.evrima.bot.ecosystem.PopulationDashboardService;
+import com.isle.evrima.bot.ecosystem.SpeciesTaxonomy;
+import com.isle.evrima.bot.rcon.EvrimaRcon;
 import com.isle.evrima.bot.rcon.RconService;
 import com.isle.evrima.bot.security.PermissionService;
 import com.isle.evrima.bot.security.StaffTier;
@@ -24,6 +26,7 @@ import java.sql.SQLException;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
+import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ThreadLocalRandom;
 
@@ -228,6 +231,7 @@ public final class BotListener extends ListenerAdapter {
                             case "kick" -> {
                                 String steam = requiredString(event, "steam_id").trim();
                                 String reason = requiredString(event, "reason");
+                                // Space after SteamID — same wire format as before (many builds accept this).
                                 String out = rcon.run("kick " + steam + " " + reason.replace('\n', ' '));
                                 database.appendAudit(event.getUser().getId(), "rcon_kick", steam + " | " + truncate(reason, 200));
                                 hookEditEphemeral(hook, "RCON: " + out);
@@ -236,8 +240,8 @@ public final class BotListener extends ListenerAdapter {
                                 String steam = requiredString(event, "steam_id").trim();
                                 String reason = requiredString(event, "reason");
                                 OptionMapping minOpt = event.getOption("minutes");
-                                int minutes = minOpt == null ? 0 : (int) minOpt.getAsLong();
-                                String out = rcon.run("ban Unknown " + steam + " " + reason.replace('\n', ' ') + " " + minutes);
+                                int minutes = minOpt == null ? 0 : Math.max(0, (int) minOpt.getAsLong());
+                                String out = rcon.run(EvrimaRcon.lineBan("Unknown", steam, reason, minutes));
                                 database.appendAudit(event.getUser().getId(), "rcon_ban",
                                         steam + " | " + minutes + "m | " + truncate(reason, 200));
                                 hookEditEphemeral(hook, "RCON: " + out);
@@ -245,7 +249,7 @@ public final class BotListener extends ListenerAdapter {
                             case "dm" -> {
                                 String steam = requiredString(event, "steam_id").trim();
                                 String message = requiredString(event, "message");
-                                String out = rcon.run("directmessage " + steam + " " + message.replace('\n', ' '));
+                                String out = rcon.run(EvrimaRcon.lineDirectMessage(steam, message));
                                 database.appendAudit(event.getUser().getId(), "rcon_dm", steam);
                                 hookEditEphemeral(hook, "RCON: " + out);
                             }
@@ -282,7 +286,7 @@ public final class BotListener extends ListenerAdapter {
                             }
                             case "ai-density" -> {
                                 double v = requiredDouble(event, "value");
-                                String out = rcon.run("aidensity " + v);
+                                String out = rcon.run(EvrimaRcon.lineAidensity(v));
                                 database.appendAudit(event.getUser().getId(), "rcon_aidensity", String.valueOf(v));
                                 hookEditEphemeral(hook,
                                         "**What this does:** `aidensity` sets how strongly **new** AI can spawn (multiplier; "
@@ -301,27 +305,30 @@ public final class BotListener extends ListenerAdapter {
                                                 + "Undo may need a restart, host tools, or `updateplayables` if your build documents it.\n\n"
                                                 + "```\n" + truncate(out, 1700) + "\n```");
                             }
-                            case "ai-stop-spawns", "ai-wipe" -> {
-                                boolean wipeCorpses = optionalBoolean(event, "wipecorpses", false);
+                            case "ai-stop-spawns" -> {
                                 String uid = event.getUser().getId();
                                 StringBuilder acc = new StringBuilder();
-                                acc.append("**`/evrima-admin ai-stop-spawns`** (and the old name `ai-wipe`) only runs **`aidensity 0`** "
-                                        + "plus optional **`wipecorpses`**.\n");
-                                acc.append("**It does not:** delete living AI, flip the AI master switch, or “wipe the map”.\n");
-                                acc.append("**RCON cannot** officially mass-despawn all AI dinos — you only get knobs like density, "
-                                        + "class bans, corpse cleanup, and the master toggle (`/evrima-admin ai-toggle`).\n\n");
+                                acc.append("**`/evrima-admin ai-stop-spawns`** runs **`aidensity 0`** only — it reduces or stops **new** AI spawns.\n");
+                                acc.append("**It does not:** delete **living** AI (use **Insert → Admin → Wipe AI** in Evrima), "
+                                        + "clean corpses (`wipecorpses`), or flip the global AI switch (`ai-toggle`).\n\n");
                                 acc.append("**aidensity 0**\n```\n")
-                                        .append(truncate(rcon.run("aidensity 0"), 1200))
+                                        .append(truncate(rcon.run(EvrimaRcon.lineAidensity(0)), 1200))
                                         .append("\n```\n");
-                                if (wipeCorpses) {
-                                    acc.append("**wipecorpses** (optional)\n```\n")
-                                            .append(truncate(rcon.run("wipecorpses"), 1200))
-                                            .append("\n```\n");
-                                }
-                                acc.append("\n**Restore:** set density again with `/evrima-admin ai-density`. "
-                                        + "Use `/evrima-admin ai-toggle` only if you intentionally want to flip the global AI switch.");
-                                database.appendAudit(uid, "rcon_ai_stop_spawns", "corpses=" + wipeCorpses);
+                                acc.append("\n**Restore:** `/evrima-admin ai-density` with your usual multiplier.");
+                                database.appendAudit(uid, "rcon_ai_stop_spawns", "");
                                 hookEditEphemeral(hook, acc.toString());
+                            }
+                            case "ai-wipe" -> {
+                                String uid = event.getUser().getId();
+                                String msg = "**Living AI wipe (The Isle Evrima)**\n\n"
+                                        + "The **Evrima dedicated RCON** commands this bot sends are the usual **named binary opcodes** "
+                                        + "(`wipecorpses`, `toggleai`, `aidensity`, `disableaiclasses`, `toggleailearning`, … — same set as "
+                                        + "common Evrima RCON docs / panels). **That set does not include** “delete all living wild AI.”\n\n"
+                                        + "**`wipecorpses`** only clears **corpses**. **`toggleai` / `aidensity` / `disableaiclasses`** do not "
+                                        + "replace **Insert → Admin → Wipe AI** in the game client.\n\n"
+                                        + "This slash command **does not** send `custom` / free-text console execs — only the mapped Evrima RCON verbs above.";
+                                database.appendAudit(uid, "rcon_ai_wipe_info", "");
+                                hookEditEphemeral(hook, msg);
                             }
                             case "ai-learning" -> {
                                 String out = rcon.run("toggleailearning");
@@ -417,9 +424,12 @@ public final class BotListener extends ListenerAdapter {
         event.deferReply(false).queue(hook -> {
             try {
                 PopulationDashboardService.SnapshotResult res = population.snapshot(fresh);
+                SpeciesTaxonomy tax = population.taxonomy();
                 MessageEmbed embed = EcosystemEmbeds.build(
                         config.ecosystemTitle(),
                         res.data(),
+                        tax,
+                        event.getGuild(),
                         res.fromCache(),
                         res.cacheAgeSeconds());
                 hook.editOriginalEmbeds(embed).queue(

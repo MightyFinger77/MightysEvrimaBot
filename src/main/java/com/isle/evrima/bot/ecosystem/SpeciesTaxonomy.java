@@ -8,6 +8,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -19,7 +20,7 @@ import java.util.regex.Pattern;
  */
 public final class SpeciesTaxonomy {
 
-    public record Entry(String display, SpeciesDiet diet, List<String> keys) {}
+    public record Entry(String display, SpeciesDiet diet, List<String> keys, String emoji) {}
 
     private final List<Entry> entries;
     /** (keyLower, entry) sorted by key length descending for greedy matching. */
@@ -81,7 +82,9 @@ public final class SpeciesTaxonomy {
                     }
                 }
             }
-            out.add(new Entry(display, diet, List.copyOf(keys)));
+            addSyntheticBlueprintKeys(display, keys);
+            String emoji = string(rowMap.get("emoji"));
+            out.add(new Entry(display, diet, List.copyOf(keys), emoji));
         }
         List<KeyRef> refs = new ArrayList<>();
         for (Entry e : out) {
@@ -98,6 +101,30 @@ public final class SpeciesTaxonomy {
 
     private static String string(Object v) {
         return v == null ? "" : String.valueOf(v).trim();
+    }
+
+    /** Typical Unreal / Evrima internal names next to Steam IDs in RCON dumps. */
+    private static void addSyntheticBlueprintKeys(String display, List<String> keys) {
+        String compact = display.replace(" ", "");
+        if (compact.isEmpty()) {
+            return;
+        }
+        addUniqueKey(keys, compact + "_C");
+        addUniqueKey(keys, "BP_" + compact);
+        addUniqueKey(keys, "BP_" + compact + "_C");
+        addUniqueKey(keys, compact.toLowerCase(Locale.ROOT) + "_c");
+    }
+
+    private static void addUniqueKey(List<String> keys, String candidate) {
+        if (candidate.isBlank()) {
+            return;
+        }
+        for (String k : keys) {
+            if (k.equalsIgnoreCase(candidate)) {
+                return;
+            }
+        }
+        keys.add(candidate);
     }
 
     private static SpeciesDiet parseDiet(String s) {
@@ -123,6 +150,40 @@ public final class SpeciesTaxonomy {
         return null;
     }
 
+    /**
+     * Like {@link #matchLine(String)} but also tries underscore/dot-normalized text and each alphanumeric token
+     * (helps {@code BP_Tyrannosaurus_C} and comma-separated internal names).
+     */
+    public Entry matchLineOrTokens(String line) {
+        if (line == null || line.isBlank()) {
+            return null;
+        }
+        Entry e = matchLine(line);
+        if (e != null) {
+            return e;
+        }
+        String norm = line.replace('_', ' ').replace('.', ' ');
+        if (!norm.equals(line)) {
+            e = matchLine(norm);
+            if (e != null) {
+                return e;
+            }
+        }
+        for (String token : norm.split("[^A-Za-z0-9]+")) {
+            if (token.length() < 4 || token.length() > 64) {
+                continue;
+            }
+            if (token.chars().allMatch(Character::isDigit)) {
+                continue;
+            }
+            e = matchLine(token);
+            if (e != null) {
+                return e;
+            }
+        }
+        return null;
+    }
+
     private static boolean matches(String hayLower, String keyLower) {
         if (keyLower.length() >= 5) {
             return hayLower.contains(keyLower);
@@ -134,5 +195,79 @@ public final class SpeciesTaxonomy {
 
     public List<Entry> entries() {
         return entries;
+    }
+
+    /**
+     * Emoji for embed display: YAML {@code emoji:} if set, otherwise a small diet-based default (🦖 / 🦕 / 🐦).
+     */
+    public String emojiForDisplay(String displayName) {
+        if (displayName == null || displayName.isBlank()) {
+            return "";
+        }
+        String want = displayName.strip();
+        for (Entry e : entries) {
+            if (e.display().equalsIgnoreCase(want)) {
+                if (e.emoji() != null && !e.emoji().isBlank()) {
+                    return e.emoji().strip();
+                }
+                return dietEmoji(e.diet());
+            }
+        }
+        return "";
+    }
+
+    private static String dietEmoji(SpeciesDiet d) {
+        return switch (d) {
+            case CARNIVORE -> "🦖";
+            case HERBIVORE -> "🦕";
+            case OMNIVORE -> "🐦";
+            default -> "🦴";
+        };
+    }
+
+    /**
+     * Count how often each species appears in a blob (one TCP line, JSON, or pipe-separated list).
+     * Scans left-to-right matching the longest taxonomy key at each step — better for single-line playerlists.
+     */
+    public Map<String, Integer> countSpeciesGreedy(String raw) {
+        if (raw == null || raw.isEmpty()) {
+            return Map.of();
+        }
+        String hay = raw.toLowerCase(Locale.ROOT);
+        Map<String, Integer> counts = new LinkedHashMap<>();
+        int pos = 0;
+        while (pos < hay.length()) {
+            KeyRef matched = null;
+            for (KeyRef ref : sortedKeys) {
+                if (matchesAt(hay, pos, ref.keyLower())) {
+                    matched = ref;
+                    break;
+                }
+            }
+            if (matched != null) {
+                counts.merge(matched.entry().display(), 1, Integer::sum);
+                pos += matched.keyLength();
+            } else {
+                pos++;
+            }
+        }
+        return counts;
+    }
+
+    private static boolean matchesAt(String hayLower, int pos, String keyLower) {
+        if (pos + keyLower.length() > hayLower.length()) {
+            return false;
+        }
+        if (!hayLower.startsWith(keyLower, pos)) {
+            return false;
+        }
+        if (keyLower.length() >= 5) {
+            return true;
+        }
+        char before = pos > 0 ? hayLower.charAt(pos - 1) : '\0';
+        char after = pos + keyLower.length() < hayLower.length()
+                ? hayLower.charAt(pos + keyLower.length())
+                : '\0';
+        return !Character.isLetterOrDigit(before) && !Character.isLetterOrDigit(after);
     }
 }

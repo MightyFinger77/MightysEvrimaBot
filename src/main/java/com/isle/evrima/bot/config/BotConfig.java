@@ -31,6 +31,11 @@ public final class BotConfig {
     private final String ecosystemTaxonomyRelative;
     private final long populationDashboardChannelId;
     private final int populationDashboardIntervalMinutes;
+    /** 0 = disabled */
+    private final int scheduledWipecorpsesIntervalMinutes;
+    /** 0 = no in-game announce before wipe */
+    private final int scheduledWipecorpsesWarnBeforeMinutes;
+    private final String scheduledWipecorpsesAnnounceMessage;
 
     public BotConfig(
             String discordToken,
@@ -50,7 +55,10 @@ public final class BotConfig {
             int ecosystemCacheTtlSeconds,
             String ecosystemTaxonomyRelative,
             long populationDashboardChannelId,
-            int populationDashboardIntervalMinutes
+            int populationDashboardIntervalMinutes,
+            int scheduledWipecorpsesIntervalMinutes,
+            int scheduledWipecorpsesWarnBeforeMinutes,
+            String scheduledWipecorpsesAnnounceMessage
     ) {
         this.discordToken = discordToken;
         this.guildId = guildId;
@@ -70,6 +78,9 @@ public final class BotConfig {
         this.ecosystemTaxonomyRelative = ecosystemTaxonomyRelative;
         this.populationDashboardChannelId = populationDashboardChannelId;
         this.populationDashboardIntervalMinutes = populationDashboardIntervalMinutes;
+        this.scheduledWipecorpsesIntervalMinutes = scheduledWipecorpsesIntervalMinutes;
+        this.scheduledWipecorpsesWarnBeforeMinutes = scheduledWipecorpsesWarnBeforeMinutes;
+        this.scheduledWipecorpsesAnnounceMessage = scheduledWipecorpsesAnnounceMessage;
     }
 
     @SuppressWarnings("unchecked")
@@ -139,6 +150,20 @@ public final class BotConfig {
             popInterval = 1;
         }
 
+        Map<String, Object> schedWipe = mapOrEmpty(root.get("scheduled_wipecorpses"));
+        int wipeMin = (int) parseLong(schedWipe.get("interval_minutes"), 0L);
+        if (wipeMin < 0) {
+            wipeMin = 0;
+        }
+        int warnBefore = (int) parseLong(schedWipe.get("warn_before_minutes"), 5L);
+        if (warnBefore < 0) {
+            warnBefore = 0;
+        }
+        String wipeAnnounce = stringOrEmpty(schedWipe.get("announce_message"));
+        if (wipeAnnounce.isBlank()) {
+            wipeAnnounce = "5 minutes until corpse wipe, eat up!";
+        }
+
         return new BotConfig(
                 token,
                 guildId,
@@ -157,7 +182,10 @@ public final class BotConfig {
                 ecoCache,
                 ecoTaxonomy,
                 popChannel,
-                popInterval
+                popInterval,
+                wipeMin,
+                warnBefore,
+                wipeAnnounce
         );
     }
 
@@ -285,5 +313,23 @@ public final class BotConfig {
 
     public int populationDashboardIntervalMinutes() {
         return populationDashboardIntervalMinutes;
+    }
+
+    /**
+     * Minutes between automatic RCON {@code wipecorpses}; {@code 0} disables the scheduler.
+     */
+    public int scheduledWipecorpsesIntervalMinutes() {
+        return scheduledWipecorpsesIntervalMinutes;
+    }
+
+    /**
+     * In-game RCON {@code announce} this many minutes before {@code wipecorpses}; {@code 0} skips the warning.
+     */
+    public int scheduledWipecorpsesWarnBeforeMinutes() {
+        return scheduledWipecorpsesWarnBeforeMinutes;
+    }
+
+    public String scheduledWipecorpsesAnnounceMessage() {
+        return scheduledWipecorpsesAnnounceMessage;
     }
 }

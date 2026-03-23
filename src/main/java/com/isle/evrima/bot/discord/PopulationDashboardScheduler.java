@@ -4,7 +4,6 @@ import com.isle.evrima.bot.config.BotConfig;
 import com.isle.evrima.bot.db.Database;
 import com.isle.evrima.bot.ecosystem.EcosystemEmbeds;
 import com.isle.evrima.bot.ecosystem.PopulationDashboardService;
-import com.isle.evrima.bot.ecosystem.PopulationSnapshot;
 import net.dv8tion.jda.api.JDA;
 import net.dv8tion.jda.api.entities.channel.concrete.TextChannel;
 import org.slf4j.Logger;
@@ -72,7 +71,13 @@ public final class PopulationDashboardScheduler {
         }
 
         PopulationDashboardService.SnapshotResult res = population.snapshot(true);
-        var embed = EcosystemEmbeds.build(config.ecosystemTitle(), res.data(), false, -1);
+        var embed = EcosystemEmbeds.build(
+                config.ecosystemTitle(),
+                res.data(),
+                population.taxonomy(),
+                ch.getGuild(),
+                false,
+                -1);
 
         String kvKey = KV_MESSAGE + "_" + channelId;
         long existingMsg = database.getBotKvLong(kvKey).orElse(0L);

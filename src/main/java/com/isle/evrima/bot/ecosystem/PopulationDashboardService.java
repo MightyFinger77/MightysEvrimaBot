@@ -33,6 +33,10 @@ public final class PopulationDashboardService {
         this.taxonomy = Objects.requireNonNull(taxonomy, "taxonomy");
     }
 
+    public SpeciesTaxonomy taxonomy() {
+        return taxonomy;
+    }
+
     public static SpeciesTaxonomy loadTaxonomy(Path configYamlPath, String taxonomyRelative) throws IOException {
         if (taxonomyRelative == null || taxonomyRelative.isBlank()) {
             return SpeciesTaxonomy.loadBundled();
@@ -63,6 +67,14 @@ public final class PopulationDashboardService {
         }
         String raw = rcon.run("playerlist");
         PopulationSnapshot snap = PlayerlistPopulationParser.parse(raw, taxonomy);
+        if (PlayerlistPopulationParser.shouldFetchBulkGetplayerdata(raw, snap)) {
+            try {
+                String bulk = rcon.run("getplayerdata");
+                snap = PlayerlistPopulationParser.parse(raw, bulk, taxonomy);
+            } catch (IOException e) {
+                LOG.warn("ecosystem: bulk getplayerdata failed: {}", e.toString());
+            }
+        }
         cache = new Cached(now, snap);
         return new SnapshotResult(snap, false, 0);
     }

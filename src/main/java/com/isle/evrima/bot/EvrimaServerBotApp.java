@@ -8,6 +8,7 @@ import com.isle.evrima.bot.discord.PopulationDashboardScheduler;
 import com.isle.evrima.bot.ecosystem.PopulationDashboardService;
 import com.isle.evrima.bot.ecosystem.SpeciesTaxonomy;
 import com.isle.evrima.bot.rcon.RconService;
+import com.isle.evrima.bot.schedule.ScheduledCorpseWipeScheduler;
 import com.isle.evrima.bot.security.PermissionService;
 import net.dv8tion.jda.api.JDA;
 import net.dv8tion.jda.api.JDABuilder;
@@ -54,6 +55,7 @@ public final class EvrimaServerBotApp {
         jda.awaitReady();
         registerSlashCommands(jda, config);
         new PopulationDashboardScheduler(config, database, population).start(jda);
+        new ScheduledCorpseWipeScheduler(config, rcon).start();
         LOG.info("EvrimaServerBot logged in as {}", jda.getSelfUser().getName());
     }
 

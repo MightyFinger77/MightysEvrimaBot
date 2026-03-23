@@ -133,7 +133,9 @@ Enable RCON in your dedicated server config (hosting docs usually mention `Game.
 
 Paths like `database.path` are relative to the **process working directory** unless you use an absolute path.
 
-**Ecosystem / population:** optional `population_dashboard.channel_id` (text channel) + `interval_minutes` posts one embed and **edits** it on a schedule; the message ID is stored in SQLite (`bot_kv`). For `/evrima ecosystem dashboard`, adjust `ecosystem.cache_ttl_seconds`, `ecosystem.title`, and optional `ecosystem.taxonomy_path` (YAML matching bundled `species-taxonomy.yml`) if your RCON `playerlist` lines use different species names.
+**Ecosystem / population:** optional `population_dashboard.channel_id` (text channel) + `interval_minutes` posts one embed and **edits** it on a schedule; the message ID is stored in SQLite (`bot_kv`). For `/evrima ecosystem dashboard`, adjust `ecosystem.cache_ttl_seconds`, `ecosystem.title`, and optional `ecosystem.taxonomy_path` (YAML matching bundled `species-taxonomy.yml`) if your RCON `playerlist` lines use different species names. The parser also handles **one-line / pipe-separated** lists, counts **SteamID64** occurrences, phrases like **“119 players”**, and a **greedy species scan** when the server does not send one player per line.
+
+**Scheduled corpse wipes:** set `scheduled_wipecorpses.interval_minutes` to a positive number to run RCON `wipecorpses` on that interval (same as `/evrima-admin wipecorpses`). Use `0` to disable. Optional `warn_before_minutes` (default 5) sends an in-game `announce` first; set `0` to skip. `announce_message` customizes the text. `interval_minutes` must be **greater than** `warn_before_minutes` for the warning to run. The schedule is counted from **when the JVM starts**; it is **not** saved to disk, so each bot **restart** resets the timer. With e.g. `interval_minutes: 120` and `warn_before_minutes: 5`, the **first** announce is about **115 minutes** after startup, then the wipe **5 minutes** later, then the pattern repeats. Failures are logged only (no Discord post).
 
 ---
 
@@ -201,7 +203,7 @@ Commands are split into **four roots** so you can hide staff trees in **Server S
 | **eco** | `balance` | Points balance. |
 | **eco** | `spin` | Once per UTC day; random points (`economy` in config). |
 | **dino** | `park` / `list` / `delete` / `retrieve` | Parking metadata (retrieve = placeholder). |
-| **ecosystem** | `dashboard` | RCON `playerlist` → species counts, carn/herb/omni buckets, % (see `ecosystem` + `species-taxonomy.yml` in config). Optional `fresh` bypasses cache. |
+| **ecosystem** | `dashboard` | RCON `playerlist` → species counts when the text **includes** species-like tokens; some builds only return **Steam IDs + player names** (no dino column) — then only player totals work, not species %. Optional `fresh` bypasses cache. |
 
 ### `/evrima-mod` (configure visibility + bot checks `moderator` / `admin` / `head_admin`)
 
@@ -216,7 +218,7 @@ Commands are split into **four roots** so you can hide staff trees in **Server S
 |------------|----------------|
 | `announce` | In-game broadcast. |
 | `playerlist` | Raw connected-player text from RCON. |
-| `kick` / `ban` / `dm` | RCON kick, ban, or DM by SteamID64 (formats are game-specific). |
+| `kick` / `ban` / `dm` | **`kick`** uses a **space** after SteamID (same as older bot builds). **`ban`** / **`dm`** use **comma**-separated fields (`EvrimaRcon.lineBan` / `lineDirectMessage`, host-panel style). |
 | `getplayer` | RCON `getplayerdata` for a SteamID64. |
 | `wipecorpses` | Corpse / body cleanup (not deleting live AI). |
 | `save` | RCON save. |
@@ -225,22 +227,21 @@ Commands are split into **four roots** so you can hide staff trees in **Server S
 | `ai-toggle` | RCON `toggleai` — **flips** global AI On↔Off; does not target a species or delete dinos. |
 | `ai-density` | RCON `aidensity` — spawn multiplier; `0` usually stops **new** spawns only. |
 | `ai-classes` | RCON `disableaiclasses` — **blocks** AI types (e.g. `boar`). **Not a toggle**; no “enable” in this bot. |
-| `ai-stop-spawns` | **`aidensity 0`** only; optional `wipecorpses`. Does **not** kill AI or flip the master switch. |
-| `ai-wipe` | Same as `ai-stop-spawns` (deprecated name). |
+| `ai-stop-spawns` | RCON **`aidensity 0`** only — slows/stops **new** AI spawns. Does **not** kill live AI, wipe corpses, or toggle AI. |
+| `ai-wipe` | **Informational only** — explains that **The Isle Evrima**’s documented **binary RCON** verbs (`wipecorpses`, `toggleai`, `aidensity`, …) **do not** include clearing **living** wild AI; use **Insert → Admin → Wipe AI** in-game. Does **not** send RCON `custom` / free-text execs. |
 | `ai-learning` | RCON `toggleailearning` if your build supports it. |
 
-#### What Evrima RCON cannot do (why the AI commands feel weird)
+#### AI commands (quick reference)
 
-There is **no** official RCON in this bot that means “delete every AI dino on the server.”
-
-| If you want… | Use… | Reality |
+| If you want… | Use… | Notes |
 |--------------|------|--------|
-| Stop **new** AI spawns | `/evrima-admin ai-stop-spawns` or `ai-density` → `0` | Already-spawned AI stay until they die or despawn naturally. |
-| Turn AI spawning **off/on globally** | `/evrima-admin ai-toggle` | Each call **toggles**; read the log line (On vs Off). |
-| Stop **one creature type** (e.g. boars) | `/evrima-admin ai-classes` with internal names | **`disableaiclasses` is disable-only.** Running it again with `boar` does **not** re-enable boars. This bot does not ship a matching “enable” RCON. |
-| Clean **corpses** | `/evrima-admin wipecorpses`, or `wipecorpses: true` on `ai-stop-spawns` | Not the same as removing living AI. |
+| Stop **new** AI spawns | `/evrima-admin ai-stop-spawns` or `ai-density` → `0` | Does not remove creatures already in the world. |
+| **Kill / clear living AI** | **Insert → Admin → Wipe AI** in Evrima | **`/evrima-admin ai-wipe`** only explains why RCON can’t do this; see that reply. |
+| Turn AI spawning **off/on globally** | `/evrima-admin ai-toggle` | Each call **toggles**. |
+| Stop **one AI type** from spawning | `/evrima-admin ai-classes` | **`disableaiclasses` is disable-only**; no matching “enable” RCON in this bot. |
+| Clean **corpses** | `/evrima-admin wipecorpses` | Not live AI. |
 
-**History:** an older version of `ai-wipe` also called `toggleai` after `aidensity 0`, which could flip AI back **On** and looked like nonsense. That step was **removed**; `ai-wipe` now matches `ai-stop-spawns`.
+**Note:** `ai-wipe` does **not** run RCON — it documents the **Evrima RCON** surface. Use **`ai-stop-spawns`** / **`ai-density`** or **`ai-toggle`** for spawn / master-switch behavior.
 
 ### `/evrima-head` (configure visibility + bot checks `head_admin` only)
 
@@ -262,7 +263,8 @@ There is **no** official RCON in this bot that means “delete every AI dino on 
 | **“Need admin role” but `head_admin` is set** | Listing an ID in `config.yml` does **not** grant it — your Discord account must **have that role** in the server. Run `/evrima account debug` and compare your role IDs to the config. **Restart** the bot after editing `config.yml`. |
 | **`Missing Access` or intent errors** | Server Members Intent enabled on the Bot tab. |
 | **RCON errors / timeouts** | Firewall, correct port, password, `bRconEnabled`. Bot host can reach game host (try `telnet`/`Test-NetConnection`). |
-| **Kick/ban syntax errors** | Your build may expect different RCON parameter order; edit command strings in `BotListener`. |
+| **“Bot is thinking…” for a long time** | Normal for RCON-heavy commands: the bot **defers** the reply (Discord’s 3s limit), then waits for **TCP connect + auth + server work** for each RCON call. Slow network, busy game server, or a high `rcon.timeout_ms` (waiting on reads) all add delay. Not a Discord “cache” issue. |
+| **Kick/ban/DM odd behavior** | **`kick`** = `kick <SteamID> <reason>` (space). **`ban`** / **`dm`** = commas (`lineBan` / `lineDirectMessage`); commas inside text → **`;`**. Ban display name **`Unknown`** unless you change `BotListener`. To use **`lineKick`** (comma after SteamID), swap one line in `BotListener`. |
 | **DM link fails** | User must allow DMs from server members; user not blocking the bot. |
 | **Timeout fails** | Bot role must be **above** the target’s top role; bot has **Moderate Members**. |
 

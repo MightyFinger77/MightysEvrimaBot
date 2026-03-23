@@ -107,10 +107,8 @@ public final class CommandRegistry {
                                 .addOption(OptionType.NUMBER, "value", "Multiplier (e.g. 0–1; see your host docs)", true),
                         new SubcommandData("ai-classes", "Disable AI creature types — NOT a toggle (RCON disableaiclasses)")
                                 .addOption(OptionType.STRING, "classes", "Internal names, comma-separated (e.g. boar,Compsognathus)", true),
-                        new SubcommandData("ai-stop-spawns", "Stop **new** AI spawns: sets aidensity 0. Does NOT delete live AI.")
-                                .addOption(OptionType.BOOLEAN, "wipecorpses", "Also run wipecorpses (default false)", false),
-                        new SubcommandData("ai-wipe", "[Deprecated] Same as ai-stop-spawns — name kept for old muscle memory")
-                                .addOption(OptionType.BOOLEAN, "wipecorpses", "Also run wipecorpses (default false)", false),
+                        new SubcommandData("ai-stop-spawns", "Stop **new** AI spawns only: RCON aidensity 0 (use wipecorpses / ai-toggle separately)"),
+                        new SubcommandData("ai-wipe", "Info: Evrima RCON has no opcode for admin-panel Wipe AI (no custom exec)"),
                         new SubcommandData("ai-learning", "Flip AI learning flag if your build supports it (RCON toggleailearning)")
                 );
     }

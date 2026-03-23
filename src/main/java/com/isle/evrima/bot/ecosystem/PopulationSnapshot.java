@@ -9,7 +9,16 @@ import java.util.Map;
  */
 public final class PopulationSnapshot {
 
-    private final int playerLines;
+    /** Row-like segments after splitting newlines / {@code |} / {@code ;}. */
+    private final int parsedSegmentCount;
+    /**
+     * Best estimate of how many players to use for totals and % (max of segments, Steam IDs, declared count, species sum).
+     */
+    private final int referencePlayerTotal;
+    /** Occurrences of SteamID64-shaped ids in the raw text (hint when list is one blob). */
+    private final int steamId64Count;
+    /** Parsed from phrases like "119 players" in the raw text, or 0. */
+    private final int declaredPlayerCount;
     private final Map<String, Integer> speciesCounts;
     private final int unknownSpeciesLines;
     private final int carnivores;
@@ -18,10 +27,15 @@ public final class PopulationSnapshot {
     private final String dominantCarnivore;
     private final String dominantHerbivore;
     private final String dominantOmnivore;
+    /** Non-empty when species counts were merged from bulk {@code getplayerdata} or similar. */
+    private final String speciesDataNote;
     private final String rawPlayerlist;
 
     public PopulationSnapshot(
-            int playerLines,
+            int parsedSegmentCount,
+            int referencePlayerTotal,
+            int steamId64Count,
+            int declaredPlayerCount,
             Map<String, Integer> speciesCounts,
             int unknownSpeciesLines,
             int carnivores,
@@ -30,9 +44,13 @@ public final class PopulationSnapshot {
             String dominantCarnivore,
             String dominantHerbivore,
             String dominantOmnivore,
+            String speciesDataNote,
             String rawPlayerlist
     ) {
-        this.playerLines = playerLines;
+        this.parsedSegmentCount = parsedSegmentCount;
+        this.referencePlayerTotal = referencePlayerTotal;
+        this.steamId64Count = steamId64Count;
+        this.declaredPlayerCount = declaredPlayerCount;
         this.speciesCounts = Collections.unmodifiableMap(new LinkedHashMap<>(speciesCounts));
         this.unknownSpeciesLines = unknownSpeciesLines;
         this.carnivores = carnivores;
@@ -41,11 +59,30 @@ public final class PopulationSnapshot {
         this.dominantCarnivore = dominantCarnivore;
         this.dominantHerbivore = dominantHerbivore;
         this.dominantOmnivore = dominantOmnivore;
+        this.speciesDataNote = speciesDataNote == null ? "" : speciesDataNote;
         this.rawPlayerlist = rawPlayerlist;
     }
 
+    /** @deprecated use {@link #parsedSegmentCount()} */
+    @Deprecated
     public int playerLines() {
-        return playerLines;
+        return parsedSegmentCount;
+    }
+
+    public int parsedSegmentCount() {
+        return parsedSegmentCount;
+    }
+
+    public int referencePlayerTotal() {
+        return referencePlayerTotal;
+    }
+
+    public int steamId64Count() {
+        return steamId64Count;
+    }
+
+    public int declaredPlayerCount() {
+        return declaredPlayerCount;
     }
 
     public Map<String, Integer> speciesCounts() {
@@ -78,6 +115,10 @@ public final class PopulationSnapshot {
 
     public String dominantOmnivore() {
         return dominantOmnivore;
+    }
+
+    public String speciesDataNote() {
+        return speciesDataNote;
     }
 
     public String rawPlayerlist() {
