@@ -1,0 +1,2 @@
+# EvrimaBot
+Evrima Discord bot
