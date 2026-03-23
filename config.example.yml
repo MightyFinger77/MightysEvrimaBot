@@ -1,0 +1,49 @@
+# Copy to config.yml next to the JAR (or set working directory).
+
+discord:
+  # Prefer environment variable DISCORD_TOKEN for production.
+  token: "paste-bot-token-or-use-env"
+  # Guild ID for faster slash-command updates (0 = global registration only).
+  guild_id: 0
+  # Discord ROLE IDs (right-click the role → Copy Role ID), NOT user/account IDs.
+  # Anyone who has one of these roles on the server gets that tier (highest wins).
+  # head_admin counts as admin for /evrima-admin. Assign the role on Discord; listing it here only configures the bot.
+  # Optional: Server Settings → Integrations → this bot → Manage — hide /evrima-mod, /evrima-admin, /evrima-head per role.
+  roles:
+    moderator: []
+    admin: []
+    head_admin: []
+
+rcon:
+  host: "127.0.0.1"
+  port: 5555
+  password: "change-me"
+  # Milliseconds (raise to 30000–60000 if you see "Read timed out" on slow RCON/dm/playerlist)
+  timeout_ms: 30000
+
+database:
+  path: "./data/evrima-bot.sqlite"
+
+linking:
+  code_ttl_minutes: 20
+
+economy:
+  daily_spin_min: 10
+  daily_spin_max: 250
+
+# Ecosystem-style population embed (/evrima ecosystem dashboard) — parses RCON playerlist lines.
+ecosystem:
+  title: "Ecosystem tracker"
+  # Short-lived cache so many users don’t hammer RCON (seconds, min 5).
+  cache_ttl_seconds: 60
+  # Optional: YAML next to config.yml with same schema as bundled species-taxonomy.yml
+  taxonomy_path: ""
+
+# Optional: auto-post / edit one dashboard message in a channel (first run sends, then edits).
+population_dashboard:
+  channel_id: 0
+  interval_minutes: 5
+
+# Optional: server log file for future chat/kill parsers (not wired in v1).
+# logs:
+#   server_log_path: "D:/TheIsle/Evrima/Saved/Logs/TheIsle.log"

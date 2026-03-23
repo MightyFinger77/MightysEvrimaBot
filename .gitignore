@@ -1,0 +1,6 @@
+/target/
+config.yml
+/data/
+*.log
+.idea/
+*.iml

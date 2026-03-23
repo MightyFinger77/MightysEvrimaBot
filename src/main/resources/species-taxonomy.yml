@@ -1,0 +1,104 @@
+# Maps substrings in RCON playerlist lines to a display name + diet bucket (for ecosystem embeds).
+# Longer keys are matched first. Short keys use word-boundary matching to reduce false positives.
+# Extend or override via ecosystem.taxonomy_path in config.yml (same schema).
+
+entries:
+  - display: Tyrannosaurus
+    diet: carnivore
+    keys: [ Tyrannosaurus, Tyrannosaur, T. Rex, T-Rex ]
+  - display: Allosaurus
+    diet: carnivore
+    keys: [ Allosaurus, Allo ]
+  - display: Carnotaurus
+    diet: carnivore
+    keys: [ Carnotaurus, Carno ]
+  - display: Giganotosaurus
+    diet: carnivore
+    keys: [ Giganotosaurus, Giga ]
+  - display: Utahraptor
+    diet: carnivore
+    keys: [ Utahraptor, Utah ]
+  - display: Deinonychus
+    diet: carnivore
+    keys: [ Deinonychus ]
+  - display: Deinosuchus
+    diet: carnivore
+    keys: [ Deinosuchus ]
+  - display: Suchomimus
+    diet: carnivore
+    keys: [ Suchomimus, Sucho ]
+  - display: Baryonyx
+    diet: carnivore
+    keys: [ Baryonyx ]
+  - display: Ceratosaurus
+    diet: carnivore
+    keys: [ Ceratosaurus, Cerato ]
+  - display: Dilophosaurus
+    diet: carnivore
+    keys: [ Dilophosaurus, Dilo ]
+  - display: Herrerasaurus
+    diet: carnivore
+    keys: [ Herrerasaurus, Herrera ]
+  - display: Concavenator
+    diet: carnivore
+    keys: [ Concavenator, Concav ]
+  - display: Spinosaurus
+    diet: carnivore
+    keys: [ Spinosaurus, Spino ]
+  - display: Acrocanthosaurus
+    diet: carnivore
+    keys: [ Acrocanthosaurus, Acro ]
+  - display: Alioramus
+    diet: carnivore
+    keys: [ Alioramus ]
+  - display: Pteranodon
+    diet: carnivore
+    keys: [ Pteranodon, Ptera ]
+  - display: Omniraptor
+    diet: omnivore
+    keys: [ Omniraptor, Omni ]
+  - display: Gallimimus
+    diet: omnivore
+    keys: [ Gallimimus, Galli ]
+  - display: Beipiaognathus
+    diet: omnivore
+    keys: [ Beipiaognathus, Beipiao ]
+  - display: Triceratops
+    diet: herbivore
+    keys: [ Triceratops, Trike ]
+  - display: Stegosaurus
+    diet: herbivore
+    keys: [ Stegosaurus, Stego ]
+  - display: Ankylosaurus
+    diet: herbivore
+    keys: [ Ankylosaurus, Anky ]
+  - display: Camarasaurus
+    diet: herbivore
+    keys: [ Camarasaurus, Camara ]
+  - display: Dryosaurus
+    diet: herbivore
+    keys: [ Dryosaurus, Dryo ]
+  - display: Parasaurolophus
+    diet: herbivore
+    keys: [ Parasaurolophus, Para ]
+  - display: Iguanodon
+    diet: herbivore
+    keys: [ Iguanodon ]
+  - display: Diablocephalus
+    diet: herbivore
+    keys: [ Diablocephalus, Diablo ]
+  - display: Pachycephalosaurus
+    diet: herbivore
+    keys: [ Pachycephalosaurus, Pachy ]
+  - display: Kentrosaurus
+    diet: herbivore
+    keys: [ Kentrosaurus, Kentro ]
+  - display: Amargasaurus
+    diet: herbivore
+    keys: [ Amargasaurus, Amarga ]
+  - display: Therizinosaurus
+    diet: herbivore
+    keys: [ Therizinosaurus, Theri ]
+  - display: Hypsilophodon
+    diet: herbivore
+    keys: [ Hypsilophodon, Hypsi ]
