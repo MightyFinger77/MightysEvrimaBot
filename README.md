@@ -127,17 +127,73 @@ Paths like `database.path` are relative to the **process working directory** unl
 
 ## Build
 
-From `EvrimaServerBot/1.0.1`:
+Build the bot yourself if you are not using a prebuilt release JAR. You only need this once per version you want to run.
+
+### Prerequisites
+
+- **Java Development Kit (JDK) 17** or newer (LTS such as Temurin 17/21 is fine). The project targets **Java 17** (`release 17` in `pom.xml`).
+- **Apache Maven 3.8+** (3.9.x recommended) on your `PATH`.
+- A copy of this project’s source (git clone, zip download, etc.). Open a terminal in the **project root** — the directory that contains **`pom.xml`** (for this repo that is usually a versioned folder like `EvrimaServerBot/1.0.1`).
+
+Check versions:
 
 ```bash
-mvn -q package
+java -version
+mvn -version
 ```
 
-Fat JAR output:
+`java -version` should report **17** or higher. `mvn -version` should show Java 17+ as the runtime Maven uses.
 
-```text
-target/evrima-server-bot-1.0.1.jar
+### Produce the runnable (“fat”) JAR
+
+The **`maven-shade-plugin`** packages dependencies into a **single executable JAR**. That is what you must run — **not** the small `original-*.jar` or a classpath-only build.
+
+From the project root (`pom.xml` here):
+
+```bash
+mvn clean package
 ```
+
+- Omit **`clean`** if you only changed a few files and want a faster rebuild: `mvn package`.
+- Add **`-DskipTests`** if the project ever has tests and you need to skip them: `mvn -q -DskipTests package` (`-q` is optional quiet output).
+
+### Output
+
+After a successful build:
+
+| Artifact | Location | Notes |
+|----------|----------|--------|
+| **Runnable bot JAR** | `target/evrima-server-bot-1.0.1.jar` | **Use this** with `java -jar`. Includes dependencies (tens of MB — if the file is only a few hundred KB, you did not build the shaded artifact). |
+| Original (non-shaded) | `target/original-evrima-server-bot-1.0.1.jar` | Internal; **do not** run this as the bot — it is not a fat JAR. |
+
+Copy **`evrima-server-bot-1.0.1.jar`** (the one **without** `original-` in the name) to the folder where you run the bot, alongside **`start-bot.bat`** if you use Windows, then follow [Run](#run).
+
+### Windows quick reference
+
+```powershell
+cd C:\path\to\EvrimaServerBot\1.0.1
+mvn clean package
+dir target\evrima-server-bot-1.0.1.jar
+```
+
+### Linux / macOS quick reference
+
+```bash
+cd /path/to/EvrimaServerBot/1.0.1
+mvn clean package
+ls -lh target/evrima-server-bot-1.0.1.jar
+```
+
+### IDE (IntelliJ, VS Code, Eclipse)
+
+Import the folder as a **Maven** project (open `pom.xml` or the root directory). Use the IDE’s Maven panel to run the **`package`** lifecycle, or execute the same `mvn clean package` in a terminal with the project root as the working directory.
+
+### Common build issues
+
+- **`mvn` not found** — Install Maven and add it to `PATH`, or use a full path to `mvn`.
+- **Wrong Java** — If Maven uses Java 8/11, set **`JAVA_HOME`** to a JDK 17+ install and restart the terminal.
+- **`BUILD FAILURE` / compiler errors** — Ensure you are on the intended **branch or version folder** and JDK **17+**.
+- **JAR runs but classes are missing** — You started **`original-*.jar`** or a non-shaded artifact; run **`target/evrima-server-bot-1.0.1.jar`** from a **`package`** build that completed **`shade`**.
 
 ---
 
