@@ -707,11 +707,35 @@ public final class BotListener extends ListenerAdapter {
 
     private String speciesControlStatusText() {
         String state = speciesControl.isEnabled() ? "ON" : "OFF";
-        return "Species population control: **" + state + "**\n"
-                + "Configured caps: **" + speciesControl.effectiveCapsReadOnly().size() + "** species\n"
-                + "Interval: **" + config.speciesPopulationControlIntervalSeconds() + "s**\n"
-                + "Unlock offset: **" + config.speciesPopulationControlUnlockBelowOffset() + "**\n"
-                + "Announce changes: **" + config.speciesPopulationControlAnnounceChanges() + "**";
+        Map<String, Integer> effective = speciesControl.effectiveCapsReadOnly();
+        Map<String, Integer> overrides = speciesControl.listCapOverrides();
+        StringBuilder sb = new StringBuilder();
+        int active = 0;
+        for (Integer v : effective.values()) {
+            if (v != null && v > 0) {
+                active++;
+            }
+        }
+        sb.append("Species population control: **").append(state).append("**\n")
+                .append("Active caps: **").append(active).append("** species\n")
+                .append("Interval: **").append(config.speciesPopulationControlIntervalSeconds()).append("s**\n")
+                .append("Unlock offset: **").append(config.speciesPopulationControlUnlockBelowOffset()).append("**\n")
+                .append("Announce changes: **").append(config.speciesPopulationControlAnnounceChanges()).append("**\n");
+        sb.append("\n**Capped species:**\n");
+        boolean any = false;
+        for (Map.Entry<String, Integer> e : effective.entrySet()) {
+            int cap = e.getValue() == null ? 0 : e.getValue();
+            if (cap <= 0) {
+                continue;
+            }
+            any = true;
+            String mark = overrides.containsKey(e.getKey()) ? " _(override)_" : "";
+            sb.append("- ").append(e.getKey()).append(": **").append(cap).append("**").append(mark).append("\n");
+        }
+        if (!any) {
+            sb.append("- None (all caps are 0/unmanaged)\n");
+        }
+        return truncate(sb.toString().strip(), 2000);
     }
 
     private String speciesCapListText() {
