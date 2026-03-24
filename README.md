@@ -166,7 +166,7 @@ After a successful build:
 | **Runnable bot JAR** | `target/evrima-server-bot-1.0.1.jar` | **Use this** with `java -jar`. Includes dependencies (tens of MB — if the file is only a few hundred KB, you did not build the shaded artifact). |
 | Original (non-shaded) | `target/original-evrima-server-bot-1.0.1.jar` | Internal; **do not** run this as the bot — it is not a fat JAR. |
 
-Copy **`evrima-server-bot-1.0.1.jar`** (the one **without** `original-` in the name) to the folder where you run the bot, alongside **`start-bot.bat`** if you use Windows, then follow [Run](#run).
+Copy **`evrima-server-bot-1.0.1.jar`** (the one **without** `original-` in the name) to the folder where you run the bot. Optionally add **`start-bot.bat`** (Windows) or **`start-bot.sh`** (Linux/macOS), then follow [Run](#run).
 
 ### Windows quick reference
 
@@ -201,12 +201,19 @@ Import the folder as a **Maven** project (open `pom.xml` or the root directory).
 
 **Working directory:** Run from the folder where you want **`configs/`** and **`data/`** to live (default config is **`configs/config.yml`**). Or pass the config path as the first argument.
 
+**Helper scripts** (same folder as the shaded JAR): **Windows** → `start-bot.bat`; **Linux / macOS** → `start-bot.sh` (`chmod +x start-bot.sh` once, then `./start-bot.sh`). Both check that the fat JAR exists, warn if the file is too small, and add `--enable-native-access=ALL-UNNAMED` when your JDK supports it.
+
 ```bash
-cd path\to\bot-folder
-java -jar target\evrima-server-bot-1.0.1.jar
+cd /path/to/bot-folder
+java -jar evrima-server-bot-1.0.1.jar
 ```
 
-**JDK 24+:** If you see warnings about `java.lang.System::load` / SQLite, either use **`start-bot.bat`** (it auto-adds `--enable-native-access=ALL-UNNAMED` when your `java` supports it) or run:
+```powershell
+cd C:\path\to\bot-folder
+java -jar evrima-server-bot-1.0.1.jar
+```
+
+**JDK 24+:** If you see warnings about `java.lang.System::load` / SQLite, either use **`start-bot.bat`** / **`start-bot.sh`** (they add `--enable-native-access=ALL-UNNAMED` when supported) or run:
 
 ```bash
 java --enable-native-access=ALL-UNNAMED -jar evrima-server-bot-1.0.1.jar
@@ -306,7 +313,7 @@ Commands are split into **four roots** so you can hide staff trees in **Server S
 |---------|------------------|
 | **Bot offline / login fails** | Token correct? `DISCORD_TOKEN` vs `config.yml`. Bot not disabled in portal. |
 | **Slash commands missing** | If `guild_id` is `0`, wait for global propagation (often up to ~1 hour) or set real guild ID and restart. Re-invite with `applications.commands` scope. |
-| **`restricted method` / SQLite `System::load` warnings (JDK 24+)** | Use `start-bot.bat`, or add `--enable-native-access=ALL-UNNAMED` before `-jar`. Harmless if ignored today; future JDKs may require the flag. |
+| **`restricted method` / SQLite `System::load` warnings (JDK 24+)** | Use `start-bot.bat` / `start-bot.sh`, or add `--enable-native-access=ALL-UNNAMED` before `-jar`. Harmless if ignored today; future JDKs may require the flag. |
 | **`10062` / “The application did not respond”** | Discord allows **3 seconds** to acknowledge a slash command. RCON often takes longer. The bot now **defers** (`…is thinking…`) for `/evrima-admin`, `/evrima-mod` (whois/timeout), `/evrima-admin give`, and `/evrima link start`. If it still happens, ensure **only one** JVM/process uses this bot token. |
 | **Duplicate slash commands** | Usually **global + guild** both registered, or an old `/evrima` tree plus the new split roots. **Restart the latest JAR** with `discord.guild_id` set: it **clears globals first**, then registers on your guild **synchronously**. For `guild_id: 0`, it clears this bot’s commands on up to 25 guilds before registering globals. Remove leftovers in [Developer Portal](https://discord.com/developers/applications) → **Commands** if needed. |
 | **“Need admin role” but `head_admin` is set** | Listing an ID in `config.yml` does **not** grant it — your Discord account must **have that role** in the server. Run `/evrima account debug` and compare your role IDs to the config. **Restart** the bot after editing `config.yml`. |
