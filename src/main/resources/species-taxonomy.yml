@@ -9,7 +9,7 @@
 #     Easiest full form: type \:EmojiName: in Discord and copy the printed "<:…>" string (quote it in YAML).
 #     Prefer uploading these emojis on the SAME server where /evrima ecosystem runs and where the dashboard posts.
 # Longer keys are matched first. Short keys use word-boundary matching to reduce false positives.
-# Extend or override via ecosystem.taxonomy_path in config.yml (same schema).
+# Lives next to config.yml (e.g. configs/species-taxonomy.yml); edit keys here to match your RCON playerlist.
 
 entries:
   - display: Allosaurus
@@ -44,10 +44,10 @@ entries:
     diet: carnivore
     emoji: 🦎
     keys: [ Troodon, Troo ]
-  - display: Tyrannosaurus rex
+  - display: Tyrannosaurus
     diet: carnivore
     emoji: 🦖
-    keys: [ Tyrannosaurus rex, Tyrannosaurus Rex, Tyrannosaurus, T. Rex, T-Rex, Trex ]
+    keys: [ Tyrannosaurus, Tyrannosaurus rex, Tyrannosaurus Rex, T. Rex, T-Rex, Trex ]
   - display: Pteranodon
     diet: carnivore
     emoji: 🦅

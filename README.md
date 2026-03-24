@@ -102,7 +102,7 @@ Enable RCON in your dedicated server config (hosting docs usually mention `Game.
 
 ## Configuration
 
-1. Copy `config.example.yml` to **`config.yml`** in the directory you will run the JAR from (or pass an explicit path; see [Run](#run)).
+1. **Default layout:** run the JAR with **no arguments** from your bot folder. It looks for an existing **`configs/config.yml`** first, then **`config/config.yml`** (singular folder). If neither exists, it creates **`configs/`** and writes only **missing** files: **`config.yml`** (from bundled `config.example.yml`) and **`species-taxonomy.yml`**. It never overwrites existing YAMLs. Edit your config and set token/RCON/etc. You can pass a custom path as the first argument (see [Run](#run)). If a mistaken first run created an empty **`configs/`** with defaults while your real files are under **`config/`**, delete the **`configs/`** folder (or the stray files inside it) so the bot picks **`config/`**.
 2. Fill in at least:
    - `discord.token` **or** environment variable `DISCORD_TOKEN`
    - `discord.guild_id` (recommended: your server’s ID) or `0` for global commands only
@@ -111,7 +111,7 @@ Enable RCON in your dedicated server config (hosting docs usually mention `Game.
 
 Paths like `database.path` are relative to the **process working directory** unless you use an absolute path.
 
-**Ecosystem / population:** optional `population_dashboard.channel_id` (text channel) + `interval_minutes` posts one embed and **edits** it on a schedule; the message ID is stored in SQLite (`bot_kv`). For `/evrima ecosystem dashboard`, adjust `ecosystem.cache_ttl_seconds`, `ecosystem.title`, and optional `ecosystem.taxonomy_path` (YAML matching bundled `species-taxonomy.yml`) if your RCON `playerlist` lines use different species names. The parser also handles **one-line / pipe-separated** lists, counts **SteamID64** occurrences, phrases like **“119 players”**, and a **greedy species scan** when the server does not send one player per line.
+**Ecosystem / population:** optional `population_dashboard.channel_id` (text channel) + `interval_minutes` posts one embed and **edits** it on a schedule; the message ID is stored in SQLite (`bot_kv`). For `/evrima ecosystem dashboard`, adjust `ecosystem.cache_ttl_seconds` and `ecosystem.title`. **Species matching** always uses **`species-taxonomy.yml` in the same directory as `config.yml`** (e.g. `configs/species-taxonomy.yml`); the bot extracts a default from the JAR if that file is missing. The parser also handles **one-line / pipe-separated** lists, counts **SteamID64** occurrences, phrases like **“119 players”**, and a **greedy species scan** when the server does not send one player per line.
 
 **Adaptive AI density:** optional `adaptive_ai_density` runs RCON `aidensity` on a timer from **how full the server is** vs `max_players` (same **player estimate** as the ecosystem dashboard). Set `enabled: true` and `max_players` to your slot cap. **`tiers`** is a list of `{ min_percent, max_percent, density }` bands (inclusive, 0–100); gaps with no matching band are skipped (with a warning). Empty / omitted `tiers` uses defaults: 0–49 → `1.0`, 50–79 → `0.5`, 80–100 → `0.15`. The bot stores the last applied value in SQLite so it **does not** re-send RCON when the target density is unchanged. Manual `/evrima-admin ai-density` still works; the next scheduler tick may override it.
 
@@ -119,7 +119,7 @@ Paths like `database.path` are relative to the **process working directory** unl
 
 **Channel topic (server status line):** optional `server_status_topic` sets **Discord channel topic(s)** on a timer (e.g. `12/60 players online | 847 unique players seen | Last update: …`). Discord **heavily rate-limits** `PATCH /channels` (guild **shared** bucket); the bot only calls the API when **player count** or **`max_players`** (or bridge-uptime minute, if enabled) **change** — not when only “Last update” or **unique-seen** would change, so new Steam IDs in `playerlist` do not trigger a topic refresh by themselves (the **unique** line still updates the next time the fingerprint changes, e.g. population moves). With **two or more** channels, topic PATCHes run **one at a time**, then wait **`multi_channel_stagger_seconds`** (default **210**, clamped 120–900) before the next — Discord has hit **~183s** Retry-After on this route; raise stagger or use fewer channels if you still see 429s. Prefer **`interval_minutes` ≥ 5** for several `channel_ids`; keep **`show_bridge_uptime: false`** unless needed. Use **`channel_id`** and/or **`channel_ids`** (merged, deduplicated). **Manage Channels** is required. **Unique players** in the topic text come from SQLite (Steam IDs seen while the bot runs). Use `max_players` for the `/` cap, or `0` to omit it.
 
-**Scheduled corpse wipes:** configure `scheduled_wipecorpses.enabled` + `interval_minutes` to run RCON `wipecorpses` automatically (same action as `/evrima-admin wipecorpses`). `enabled` supports `true`, `false`, and `dynamic`. In `dynamic`, wipes target ON when online percent is at least `dynamic_enable_percent` of `dynamic_max_players`, and OFF when below it; transitions are debounced by `dynamic_disable_grace_seconds` in both directions (anti-flap). Optional `warn_before_minutes` sends an in-game `announce` first; set `0` to skip. `announce_message` customizes the warning text. Runtime control is available via `/evrima-admin corpse-wipe-control` and `/evrima-admin corpse-wipe-set` / `corpse-wipe-clear` (persisted in SQLite `bot_kv`, survives restart).
+**Scheduled corpse wipes:** configure `scheduled_wipecorpses.enabled` + `interval_minutes` to run RCON `wipecorpses` automatically (same action as `/evrima-admin wipecorpses`). `enabled` supports `true`, `false`, and `dynamic`. In `dynamic`, wipes target ON when online percent is at least `dynamic_enable_percent` of `dynamic_max_players`, and OFF when below it; transitions are debounced by `dynamic_disable_grace_seconds` in both directions (anti-flap). After a **pre-wipe `announce`** succeeds, that wipe still runs on schedule even if population drops below threshold (players were warned). Optional `warn_before_minutes` sends an in-game `announce` first; set `0` to skip. `announce_message` customizes the warning text. Runtime control is available via `/evrima-admin corpse-wipe-control` and `/evrima-admin corpse-wipe-set` / `corpse-wipe-clear` (persisted in SQLite `bot_kv`, survives restart).
 
 **In-game log → Discord (chat + kills/deaths):** Evrima RCON does **not** expose chat or kill feeds. Optional `ingame_chat_log` tails **`TheIsle.log`** and posts lines that match **any** substring in `line_contains` (YAML list or one string). Defaults include **`LogTheIsleChatData`** (chat) and **`LogTheIsleKillData`** (kills / many death messages such as PvP — same markers as [Theislemanager/Chatbot](https://github.com/Theislemanager/Chatbot)). By default **`mirror_local_chat: false`** drops **`[Spatial]`** / **`[Local]`** lines after parse so only global-style traffic is mirrored; set **`mirror_local_chat: true`** to include proximity chat. The bot **parses** known formats into short Discord lines, e.g. `[Global] **Player:** message` and `**Kill:** **Player** — …`. Other shapes get a best-effort strip of tags/SteamIDs. Starvation / odd kills: add substrings from your log if needed. **YAML on Windows:** use forward slashes or single-quoted paths (see `config.example.yml` under `ingame_chat_log`). `channel_id: 0` disables; offset in `bot_kv`; new paths start at EOF.
 
@@ -143,7 +143,7 @@ target/evrima-server-bot-1.0.1.jar
 
 ## Run
 
-**Working directory:** Use the folder that contains `config.yml` (or pass the config path as the first argument).
+**Working directory:** Run from the folder where you want **`configs/`** and **`data/`** to live (default config is **`configs/config.yml`**). Or pass the config path as the first argument.
 
 ```bash
 cd path\to\bot-folder
@@ -276,3 +276,11 @@ Commands are split into **four roots** so you can hide staff trees in **Server S
 ## License / attribution
 
 Independent project; not affiliated with PrimalCore or The Isle. Extend and run on your own infrastructure.
+
+---
+
+## Roadmap / todo
+
+- [ ] Make species population caps dynamic according to max_player percentage
+- [ ] Complete dino parking feature
+- [ ] Find a way to implement ai-wipe... (set density to 0 briefly maybe?)

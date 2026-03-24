@@ -42,7 +42,8 @@ public final class EvrimaServerBotApp {
     private static final String KV_CORPSE_WIPE_DYN_GRACE = "scheduled_wipecorpses_runtime_dynamic_disable_grace_seconds";
 
     public static void main(String[] args) throws Exception {
-        Path cfgPath = Path.of(args.length > 0 ? args[0] : "config.yml");
+        Path cfgPath = ConfigBootstrap.resolveConfigYamlPath(args);
+        ConfigBootstrap.ensureSpeciesTaxonomyBesideConfig(cfgPath);
         BotConfig config = BotConfig.load(cfgPath);
 
         PermissionService permPreview = new PermissionService(config);
@@ -54,7 +55,7 @@ public final class EvrimaServerBotApp {
 
         RconService rcon = new RconService(config);
         PermissionService permissions = new PermissionService(config);
-        SpeciesTaxonomy taxonomy = PopulationDashboardService.loadTaxonomy(cfgPath, config.ecosystemTaxonomyRelative());
+        SpeciesTaxonomy taxonomy = PopulationDashboardService.loadTaxonomy(cfgPath);
         PopulationDashboardService population = new PopulationDashboardService(config, rcon, taxonomy);
         ScheduledCorpseWipeScheduler corpseWipe = new ScheduledCorpseWipeScheduler(config, rcon, population);
         SpeciesPopulationControlScheduler speciesControl = new SpeciesPopulationControlScheduler(config, rcon, population);

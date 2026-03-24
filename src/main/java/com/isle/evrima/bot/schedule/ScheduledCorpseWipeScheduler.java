@@ -36,6 +36,8 @@ public final class ScheduledCorpseWipeScheduler {
     private final AtomicInteger runtimeWarnMin;
     private final AtomicReference<String> runtimeAnnounceMessage;
     private final AtomicBoolean announcedThisCycle = new AtomicBoolean(false);
+    /** In {@code dynamic} mode: after pre-wipe {@code announce} succeeds, finish this wipe even if population drops below threshold. */
+    private final AtomicBoolean pendingWipeCommittedDynamic = new AtomicBoolean(false);
     private final AtomicLong nextWipeEpochSec = new AtomicLong(0L);
     private final AtomicBoolean lastEffectiveEnabled = new AtomicBoolean(false);
     private final AtomicLong dynamicAboveSinceEpochSec = new AtomicLong(0L);
@@ -205,15 +207,17 @@ public final class ScheduledCorpseWipeScheduler {
         long intervalSec = Math.max(0L, runtimeIntervalMin.get()) * 60L;
         nextWipeEpochSec.set(intervalSec <= 0 ? 0L : now + intervalSec);
         announcedThisCycle.set(false);
+        pendingWipeCommittedDynamic.set(false);
     }
 
     private void runTick() {
         boolean effectiveEnabled = isEffectivelyEnabled();
+        boolean wipeCommitted = pendingWipeCommittedDynamic.get();
         boolean prev = lastEffectiveEnabled.getAndSet(effectiveEnabled);
-        if (effectiveEnabled != prev) {
+        if (effectiveEnabled != prev && !wipeCommitted) {
             resetCycleFromNow();
         }
-        if (!effectiveEnabled) {
+        if (!effectiveEnabled && !wipeCommitted) {
             return;
         }
         int periodMin = runtimeIntervalMin.get();
@@ -236,8 +240,14 @@ public final class ScheduledCorpseWipeScheduler {
                     String msg = sanitizeAnnounce(runtimeAnnounceMessage.get());
                     String annOut = rcon.run("announce " + msg);
                     announcedThisCycle.set(true);
-                    LOG.info("Scheduled wipecorpses: pre-wipe announce sent ({} min to wipe): {}",
-                            warnMin, oneLine(annOut));
+                    if ("dynamic".equals(runtimeEnabledMode.get())) {
+                        pendingWipeCommittedDynamic.set(true);
+                        LOG.info("Scheduled wipecorpses: pre-wipe announce sent ({} min to wipe); dynamic latch on — wipe will run on schedule even if population drops: {}",
+                                warnMin, oneLine(annOut));
+                    } else {
+                        LOG.info("Scheduled wipecorpses: pre-wipe announce sent ({} min to wipe): {}",
+                                warnMin, oneLine(annOut));
+                    }
                 }
             }
             if (now >= wipeAt) {

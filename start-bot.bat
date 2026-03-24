@@ -19,13 +19,6 @@ if %JARSIZE% LSS 5000000 (
     exit /b 1
 )
 
-if not exist "config.yml" (
-    echo [ERROR] config.yml not found.
-    echo Copy config.example.yml to config.yml and edit it, then run again.
-    pause
-    exit /b 1
-)
-
 where java >nul 2>&1
 if errorlevel 1 (
     echo [ERROR] java not on PATH. Install Java 17+ ^(Temurin, Oracle, etc.^).

@@ -587,12 +587,12 @@ public final class PlayerlistPopulationParser {
             return "Your RCON **playerlist** only contains **Steam IDs** and **player display names** (like your paste) — "
                     + "there is **no dinosaur / species field** in that output, so **species breakdown is impossible** from this command alone. "
                     + "Player count uses Steam IDs. PrimalCore-style species charts use **other hooks** (not this RCON text). "
-                    + "Adding `taxonomy_path` cannot fix missing data.";
+                    + "Editing `species-taxonomy.yml` cannot fix missing species fields in RCON.";
         }
         if (snap.steamId64Count() > 5 && snap.unknownSpeciesLines() * 2 > snap.referencePlayerTotal()) {
             return "Species names in RCON don’t match bundled keys (often **internal** names like `BP_*_C` or short codes). "
                     + "Run `/evrima-admin playerlist`, copy **one player’s** substring (the part after their SteamID), "
-                    + "and add those strings under `keys:` in `species-taxonomy.yml` (or `ecosystem.taxonomy_path`). "
+                    + "and add those strings under `keys:` in `species-taxonomy.yml` (next to `config.yml`). "
                     + "The bot now auto-adds `BP_DisplayName_C`-style keys, but your build may differ.";
         }
         if (snap.parsedSegmentCount() <= 1

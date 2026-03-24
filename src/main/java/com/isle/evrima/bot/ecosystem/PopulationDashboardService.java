@@ -37,21 +37,20 @@ public final class PopulationDashboardService {
         return taxonomy;
     }
 
-    public static SpeciesTaxonomy loadTaxonomy(Path configYamlPath, String taxonomyRelative) throws IOException {
-        if (taxonomyRelative == null || taxonomyRelative.isBlank()) {
-            return SpeciesTaxonomy.loadBundled();
-        }
+    /**
+     * Loads {@code species-taxonomy.yml} from the same directory as {@code config.yml} (e.g. {@code configs/}).
+     */
+    public static SpeciesTaxonomy loadTaxonomy(Path configYamlPath) throws IOException {
         Path parent = configYamlPath.getParent();
         if (parent == null) {
-            parent = Path.of(".");
+            parent = Path.of(".").toAbsolutePath().normalize();
         }
-        Path custom = parent.resolve(taxonomyRelative).normalize();
-        if (Files.isRegularFile(custom)) {
-            LOG.info("Using custom species taxonomy: {}", custom.toAbsolutePath());
-            return SpeciesTaxonomy.loadFile(custom);
+        Path taxFile = parent.resolve("species-taxonomy.yml").normalize();
+        if (!Files.isRegularFile(taxFile)) {
+            throw new IOException("Missing species-taxonomy.yml next to config (expected " + taxFile.toAbsolutePath() + ")");
         }
-        LOG.warn("ecosystem.taxonomy_path not found ({}), using bundled taxonomy", custom.toAbsolutePath());
-        return SpeciesTaxonomy.loadBundled();
+        LOG.info("Loading species taxonomy from {}", taxFile.toAbsolutePath());
+        return SpeciesTaxonomy.loadFile(taxFile);
     }
 
     /**

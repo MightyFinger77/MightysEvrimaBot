@@ -59,8 +59,6 @@ ecosystem:
   title: "Ecosystem tracker"
   # Short-lived cache so many users don’t hammer RCON (seconds, min 5).
   cache_ttl_seconds: 60
-  # Optional: YAML next to config.yml with same schema as bundled species-taxonomy.yml
-  taxonomy_path: ""
 
 # Optional: auto-post / edit one dashboard message in a channel (first run sends, then edits).
 population_dashboard:
@@ -107,8 +105,17 @@ species_population_control:
   unlock_below_offset: 1
   announce_changes: false
   # 0 means unlimited/unmanaged; omit keys you don't want managed.
-  # Defaults below use your current roster.
+  # Cap keys must match server AllowedClasses / getplayables names (verified roster, 20 species).
   caps:
+    # Herbivores
+    Hypsilophodon: 0
+    Maiasaura: 0
+    Pachycephalosaurus: 14
+    Stegosaurus: 12
+    Tenontosaurus: 0
+    Triceratops: 10
+    Diabloceratops: 0
+    Dryosaurus: 0
     # Carnivores
     Allosaurus: 16
     Carnotaurus: 18
@@ -117,21 +124,12 @@ species_population_control:
     Dilophosaurus: 0
     Herrerasaurus: 0
     Omniraptor: 18
-    Troodon: 0
-    Tyrannosaurus rex: 10
     Pteranodon: 18
-    # Herbivores
-    Stegosaurus: 12
-    Tenontosaurus: 0
-    Hypsilophodon: 0
-    Pachycephalosaurus: 14
-    Diabloceratops: 0
-    Dryosaurus: 0
-    Maiasaura: 0
-    Triceratops: 10
+    Troodon: 0
+    Tyrannosaurus: 10
     # Omnivores
-    Gallimimus: 0
     Beipiaosaurus: 0
+    Gallimimus: 0
 
 # Optional: RCON wipecorpses on a timer. Runtime admin commands can toggle/edit this without file access.
 # enabled accepts true/false/dynamic.

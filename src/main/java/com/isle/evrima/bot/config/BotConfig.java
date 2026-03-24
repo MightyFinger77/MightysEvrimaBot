@@ -29,7 +29,6 @@ public final class BotConfig {
     private final int dailySpinMax;
     private final String ecosystemTitle;
     private final int ecosystemCacheTtlSeconds;
-    private final String ecosystemTaxonomyRelative;
     private final long populationDashboardChannelId;
     private final int populationDashboardIntervalMinutes;
     /** Empty = disabled — text channel topics updated with the same status line (see {@link #serverStatusTopicChannelIds()}). */
@@ -105,7 +104,6 @@ public final class BotConfig {
             int dailySpinMax,
             String ecosystemTitle,
             int ecosystemCacheTtlSeconds,
-            String ecosystemTaxonomyRelative,
             long populationDashboardChannelId,
             int populationDashboardIntervalMinutes,
             List<Long> serverStatusTopicChannelIds,
@@ -152,7 +150,6 @@ public final class BotConfig {
         this.dailySpinMax = dailySpinMax;
         this.ecosystemTitle = ecosystemTitle;
         this.ecosystemCacheTtlSeconds = ecosystemCacheTtlSeconds;
-        this.ecosystemTaxonomyRelative = ecosystemTaxonomyRelative;
         this.populationDashboardChannelId = populationDashboardChannelId;
         this.populationDashboardIntervalMinutes = populationDashboardIntervalMinutes;
         this.serverStatusTopicChannelIds = List.copyOf(serverStatusTopicChannelIds);
@@ -189,7 +186,8 @@ public final class BotConfig {
     public static BotConfig load(Path yamlFile) throws IOException {
         Objects.requireNonNull(yamlFile, "yamlFile");
         if (!Files.isRegularFile(yamlFile)) {
-            throw new IOException("Missing config file: " + yamlFile.toAbsolutePath() + " (copy config.example.yml to config.yml)");
+            throw new IOException("Missing config file: " + yamlFile.toAbsolutePath()
+                    + " (run with no args to auto-create configs/ or use config/config.yml, or pass a path to your config.yml)");
         }
         Map<String, Object> root;
         try (InputStream in = Files.newInputStream(yamlFile)) {
@@ -243,7 +241,6 @@ public final class BotConfig {
         if (ecoCache < 5) {
             ecoCache = 5;
         }
-        String ecoTaxonomy = stringOrEmpty(ecosystem.get("taxonomy_path"));
 
         Map<String, Object> popDash = mapOrEmpty(root.get("population_dashboard"));
         long popChannel = parseLong(popDash.get("channel_id"), 0L);
@@ -372,7 +369,6 @@ public final class BotConfig {
                 spinMax,
                 ecoTitle,
                 ecoCache,
-                ecoTaxonomy,
                 popChannel,
                 popInterval,
                 stChannels,
@@ -667,10 +663,6 @@ public final class BotConfig {
 
     public int ecosystemCacheTtlSeconds() {
         return ecosystemCacheTtlSeconds;
-    }
-
-    public String ecosystemTaxonomyRelative() {
-        return ecosystemTaxonomyRelative;
     }
 
     public long populationDashboardChannelId() {
