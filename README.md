@@ -337,7 +337,7 @@ Commands are split into **four roots** so you can hide staff trees in **Server S
 
 ## Security notes
 
-- **Never commit** `config.yml` (e.g. under **`configs/`**) with a live token (this repo’s `.gitignore` ignores common names).
+- **Never commit** `config.yml` with a live token (this repo’s `.gitignore` ignores it).
 - Prefer **`DISCORD_TOKEN`** on the host over a token in a file.
 - RCON password is effectively **root on the game server**—treat like a secret.
 - Anyone with an **admin role ID** in config can run destructive RCON; keep those roles tight.
