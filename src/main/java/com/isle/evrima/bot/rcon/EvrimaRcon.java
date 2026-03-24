@@ -9,8 +9,11 @@ import java.net.Socket;
 import java.net.SocketTimeoutException;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * The Isle Evrima binary RCON: {@code 0x01 + password + 0} to authenticate, then
@@ -187,6 +190,71 @@ public final class EvrimaRcon implements AutoCloseable {
             }
         }
         return buf.toString(StandardCharsets.UTF_8);
+    }
+
+    /**
+     * Many Evrima builds return <i>all</i> spawned players from {@code getplayerdata} even when a SteamID64 is sent in the
+     * payload. This keeps the {@code PlayerData} header line (if any) plus body line(s) whose {@code PlayerID:} digits
+     * equal {@code steamId64} (trimmed).
+     *
+     * @return filtered text, or empty string when no row matches (caller may show a short explanation)
+     */
+    public static String filterGetplayerdataResponseForSteamId(String fullResponse, String steamId64) {
+        if (steamId64 == null || steamId64.isBlank()) {
+            return fullResponse == null ? "" : fullResponse;
+        }
+        if (fullResponse == null || fullResponse.isBlank()) {
+            return "";
+        }
+        String target = steamId64.trim();
+        String normalized = fullResponse.replace("\r\n", "\n");
+        String[] lines = normalized.split("\n", -1);
+        List<String> bodyMatches = new ArrayList<>();
+        String headerLine = null;
+        for (String line : lines) {
+            if (headerLine == null && line.contains("PlayerData")) {
+                headerLine = line;
+                continue;
+            }
+            Optional<String> pid = playerIdFromGetplayerdataLine(line);
+            if (pid.isPresent() && target.equals(pid.get())) {
+                bodyMatches.add(line);
+            }
+        }
+        if (bodyMatches.isEmpty()) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder();
+        if (headerLine != null) {
+            sb.append(headerLine).append('\n');
+        }
+        for (String b : bodyMatches) {
+            sb.append(b).append('\n');
+        }
+        return sb.toString().trim();
+    }
+
+    private static Optional<String> playerIdFromGetplayerdataLine(String line) {
+        if (line == null || line.isEmpty()) {
+            return Optional.empty();
+        }
+        String key = "PlayerID:";
+        int i = line.indexOf(key);
+        if (i < 0) {
+            return Optional.empty();
+        }
+        int j = i + key.length();
+        while (j < line.length() && Character.isWhitespace(line.charAt(j))) {
+            j++;
+        }
+        int k = j;
+        while (k < line.length() && Character.isDigit(line.charAt(k))) {
+            k++;
+        }
+        if (k == j) {
+            return Optional.empty();
+        }
+        return Optional.of(line.substring(j, k));
     }
 
     /**

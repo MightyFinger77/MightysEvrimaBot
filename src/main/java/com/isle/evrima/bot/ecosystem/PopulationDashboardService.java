@@ -19,7 +19,8 @@ public final class PopulationDashboardService {
 
     private final LiveBotConfig live;
     private final RconService rcon;
-    private final SpeciesTaxonomy taxonomy;
+    /** Replaced by {@link #reloadTaxonomyFromDisk()} when admins reload YAML from disk. */
+    private volatile SpeciesTaxonomy taxonomy;
 
     private volatile Cached cache;
 
@@ -35,6 +36,16 @@ public final class PopulationDashboardService {
 
     public SpeciesTaxonomy taxonomy() {
         return taxonomy;
+    }
+
+    /**
+     * Reloads {@code species-taxonomy.yml} next to {@link LiveBotConfig#yamlPath()} and clears the ecosystem snapshot cache.
+     */
+    public void reloadTaxonomyFromDisk() throws IOException {
+        SpeciesTaxonomy next = loadTaxonomy(live.yamlPath());
+        this.taxonomy = next;
+        this.cache = null;
+        LOG.info("Reloaded species taxonomy from disk (ecosystem cache cleared)");
     }
 
     /**

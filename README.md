@@ -266,12 +266,12 @@ Commands are split into **four roots** so you can hide staff trees in **Server S
 
 | Subcommand | What it does |
 |------------|----------------|
-| `whois` | Linked Steam + optional `getplayerdata` via RCON. |
+| `whois` | Linked Steam + filtered `getplayerdata` via RCON. Use **`user`** (Discord) **or** **`player`** (SteamID64 / in-game name from live `playerlist`), not both. |
 | `timeout` | Discord timeout (minutes). |
 
 ### `/evrima-admin` (configure visibility + bot checks `admin` **or** `head_admin`)
 
-**Config persistence:** If a subcommand changes a setting that lives in `config.yml`, the bot **updates that file** and reloads config in memory (`applyYamlMutation` in `BotListener`). Species and corpse-wipe edits **only change the relevant lines** under `species_population_control` / `scheduled_wipecorpses` so your banner, comments, and the rest of the file layout stay intact (no full-file YAML re-dump). Other entries here are **RCON** (game server) or **SQLite** (e.g. `/evrima-admin give` points). `bot_kv` is still used for operational state such as chat-log tail offsets and dashboard message IDs, not for YAML tuning.
+**Config persistence:** If a subcommand changes a setting that lives in `config.yml`, the bot **updates that file** and reloads config in memory (`applyYamlMutation` in `BotListener`). **`/evrima-admin reload`** re-reads `config.yml` and `species-taxonomy.yml` from disk after **manual** edits (no JVM restart). Species and corpse-wipe slash edits **only change the relevant lines** under `species_population_control` / `scheduled_wipecorpses` so your banner, comments, and the rest of the file layout stay intact (no full-file YAML re-dump). Other entries here are **RCON** (game server) or **SQLite** (e.g. `/evrima-admin give` points). `bot_kv` is still used for operational state such as chat-log tail offsets and dashboard message IDs, not for YAML tuning.
 
 | Subcommand | What it does |
 |------------|----------------|
@@ -280,6 +280,7 @@ Commands are split into **four roots** so you can hide staff trees in **Server S
 | `kick` / `ban` / `dm` | Option **`player`**: **SteamID64** or **in-game display name** (bot fetches `playerlist` and matches; ambiguous names get a list). **`kick`** uses a **space** after the resolved SteamID. **`ban`** / **`dm`** use **comma** fields on the wire (`lineBan` / `lineDirectMessage`). |
 | `getplayer` | RCON `getplayerdata`; **`player`** = SteamID64 or name (same resolver as `dm`). |
 | `wipecorpses` | Corpse / body cleanup (not deleting live AI). |
+| `reload` | Reload **`config.yml`** + **`species-taxonomy.yml`** from disk into memory (manual YAML edits). Does not restart the process — scheduler **intervals** and some **channel/log paths** may still need a **full restart** to apply everywhere. |
 | `save` | RCON save. |
 | `unlink` | Remove this bot’s stored Discord↔Steam link (not in-game). |
 | `give` | Add points in the bot’s SQLite economy (not RCON). |
@@ -290,8 +291,8 @@ Commands are split into **four roots** so you can hide staff trees in **Server S
 | `ai-wipe` | **Informational only** — explains that **The Isle Evrima**’s documented **binary RCON** verbs (`wipecorpses`, `toggleai`, `aidensity`, …) **do not** include clearing **living** wild AI; use **Insert → Admin → Wipe AI** in-game. Does **not** send RCON `custom` / free-text execs. |
 | `ai-learning` | RCON `toggleailearning` if your build supports it. |
 | `species-control` | `mode=on|off|status` — toggle `species_population_control.enabled` or show **status** (values from `config.yml`). |
-| `species-cap-set` | Set `species_population_control.caps.<species>` in `config.yml` (`species` + `cap`; `0` = unlimited / unmanaged for that species). |
-| `species-cap-clear` | Reset one species cap in `config.yml` to the value from the bundled default template, or **0** if not listed there. |
+| `species-cap-set` | Set `species_population_control.caps.<species>` in `config.yml` (`species` + `cap`; `0` = unlimited / unmanaged). **`species` must match a name in the bundled default `caps` roster** (case-insensitive); unknown names are rejected with no file change. On-disk key casing is preserved when you edit an existing line. |
+| `species-cap-clear` | Reset one species cap to the bundled default (or **0**). Same **bundled roster** validation as `species-cap-set`. |
 | `species-cap-list` | List capped species from loaded config. |
 | `corpse-wipe-control` | Toggle/status for `scheduled_wipecorpses.enabled` (`on|off|dynamic|status`); writes `config.yml`. |
 | `corpse-wipe-set` | Set a `scheduled_wipecorpses` field in `config.yml` by `key` and `value`. |

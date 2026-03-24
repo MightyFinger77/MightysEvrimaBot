@@ -11,11 +11,13 @@ import com.isle.evrima.bot.ecosystem.PlayerTargetResolver;
 import com.isle.evrima.bot.ecosystem.PopulationDashboardService;
 import com.isle.evrima.bot.ecosystem.SpeciesTaxonomy;
 import com.isle.evrima.bot.rcon.EvrimaRcon;
+import com.isle.evrima.bot.rcon.PlayerdataIpExtract;
 import com.isle.evrima.bot.rcon.RconService;
 import com.isle.evrima.bot.schedule.ScheduledCorpseWipeScheduler;
 import com.isle.evrima.bot.schedule.SpeciesPopulationControlScheduler;
 import com.isle.evrima.bot.security.PermissionService;
 import com.isle.evrima.bot.security.StaffTier;
+import net.dv8tion.jda.api.JDA;
 import net.dv8tion.jda.api.entities.Member;
 import net.dv8tion.jda.api.entities.MessageEmbed;
 import net.dv8tion.jda.api.entities.User;
@@ -43,8 +45,9 @@ import java.util.concurrent.ThreadLocalRandom;
 /**
  * Discord slash entrypoint. <b>Config persistence:</b> subcommands that alter settings defined in {@code config.yml}
  * must use {@link #applyYamlMutation} with {@link com.isle.evrima.bot.config.ConfigYamlUpdater} — never {@code bot_kv}
- * for those values. RCON-only admin actions and economy/link data are unaffected. When adding reload-sensitive
- * components, extend {@link #applyYamlMutation} (after {@link LiveBotConfig#reloadFromDisk()}) as needed.
+ * for those values. RCON-only admin actions and economy/link data are unaffected. **`/evrima-admin reload`**
+ * calls {@link #reloadYamlFromDisk()} (config + taxonomy + scheduler hooks). When adding reload-sensitive
+ * components, extend {@link #applyYamlMutation} or {@link #reloadYamlFromDisk} as needed.
  */
 public final class BotListener extends ListenerAdapter {
 
@@ -277,13 +280,32 @@ public final class BotListener extends ListenerAdapter {
                             case "getplayer" -> {
                                 String steam = resolveAdminPlayerTarget(requiredString(event, "player"));
                                 String out = rcon.run("getplayerdata " + steam);
+                                String filtered = EvrimaRcon.filterGetplayerdataResponseForSteamId(out, steam);
                                 database.appendAudit(event.getUser().getId(), "rcon_getplayer", steam);
-                                hookEditEphemeral(hook, "```\n" + out + "\n```");
+                                if (filtered.isEmpty()) {
+                                    hookEditEphemeral(hook, "No `getplayerdata` row for SteamID `" + steam
+                                            + "` (not spawned in, id mismatch, or empty RCON response). Raw (truncated):\n```\n"
+                                            + truncate(out, 1200) + "\n```");
+                                } else {
+                                    Optional<String> dip = PlayerdataIpExtract.preferredIpv4(filtered);
+                                    String ipLine = dip.map(s -> "**IP:** `" + s + "` *(from getplayerdata)*")
+                                            .orElse("**IP:** *(not present in getplayerdata text)*");
+                                    hookEditEphemeral(hook, ipLine + "\n\n```\n" + truncate(filtered, 1800) + "\n```");
+                                }
                             }
                             case "wipecorpses" -> {
                                 String out = rcon.run("wipecorpses");
                                 database.appendAudit(event.getUser().getId(), "rcon_wipecorpses", "");
                                 hookEditEphemeral(hook, "RCON: " + out);
+                            }
+                            case "reload" -> {
+                                reloadYamlFromDisk();
+                                database.appendAudit(event.getUser().getId(), "admin_config_reload", "");
+                                hookEditEphemeral(hook,
+                                        "Reloaded **`config.yml`** and **`species-taxonomy.yml`** from disk into memory.\n"
+                                                + "Schedulers still use intervals/channel IDs from process start — **restart the bot** if you changed "
+                                                + "`database.path`, Discord token, or poll/topic/dashboard timing.\n"
+                                                + "Role checks and RCON settings apply immediately for new operations.");
                             }
                             case "save" -> {
                                 String out = rcon.run("save");
@@ -387,15 +409,17 @@ public final class BotListener extends ListenerAdapter {
                                     hookEditEphemeral(hook, "cap must be between 0 and 500.");
                                     break;
                                 }
-                                applyYamlMutation(y -> ConfigYamlUpdater.setSpeciesCap(y, species, cap));
-                                database.appendAudit(event.getUser().getId(), "species_cap_set", species + "=" + cap);
-                                hookEditEphemeral(hook, "Updated `config.yml`: species cap **" + species + " = " + cap + "**");
+                                String canonical = ConfigYamlUpdater.requireCanonicalSpeciesCapKey(species);
+                                applyYamlMutation(y -> ConfigYamlUpdater.setSpeciesCapWithBundledKey(y, canonical, cap));
+                                database.appendAudit(event.getUser().getId(), "species_cap_set", canonical + "=" + cap);
+                                hookEditEphemeral(hook, "Updated `config.yml`: species cap **`" + canonical + "` = " + cap + "**");
                             }
                             case "species-cap-clear" -> {
                                 String species = requiredString(event, "species").trim();
-                                applyYamlMutation(y -> ConfigYamlUpdater.clearSpeciesCapToExampleDefault(y, species));
-                                database.appendAudit(event.getUser().getId(), "species_cap_clear", species);
-                                hookEditEphemeral(hook, "Reset **" + species + "** cap in `config.yml` to the value from bundled defaults (or **0** if not listed there).");
+                                String canonical = ConfigYamlUpdater.requireCanonicalSpeciesCapKey(species);
+                                applyYamlMutation(y -> ConfigYamlUpdater.clearSpeciesCapToExampleDefault(y, canonical));
+                                database.appendAudit(event.getUser().getId(), "species_cap_clear", canonical);
+                                hookEditEphemeral(hook, "Reset **`" + canonical + "`** cap in `config.yml` to the value from bundled defaults (or **0** if not listed there).");
                             }
                             case "species-cap-list" -> hookEditEphemeral(hook, speciesCapListText());
                             case "corpse-wipe-control" -> {
@@ -527,27 +551,61 @@ public final class BotListener extends ListenerAdapter {
             return;
         }
         if ("whois".equals(sub)) {
-            User target = requiredUser(event, "user");
+            OptionMapping userOpt = event.getOption("user");
+            OptionMapping playerOpt = event.getOption("player");
+            String playerRaw = playerOpt != null ? playerOpt.getAsString() : null;
+            boolean hasPlayer = playerRaw != null && !playerRaw.isBlank();
+            boolean hasUser = userOpt != null;
+            if (hasUser && hasPlayer) {
+                event.reply("Use **either** `user` (Discord) **or** `player` (SteamID64 / in-game name), not both.")
+                        .setEphemeral(true).queue();
+                return;
+            }
+            if (!hasUser && !hasPlayer) {
+                event.reply("Provide **`user`** (Discord account) or **`player`** (SteamID64 or in-game name from `/evrima-admin playerlist`).")
+                        .setEphemeral(true).queue();
+                return;
+            }
+            if (hasUser) {
+                User target = userOpt.getAsUser();
+                event.deferReply(true).queue(hook -> {
+                    try {
+                        Optional<String> steam = database.findSteamIdForDiscord(target.getId());
+                        StringBuilder sb = new StringBuilder();
+                        sb.append("Discord: ").append(target.getName()).append(" (").append(target.getId()).append(")\n");
+                        if (steam.isEmpty()) {
+                            sb.append("Steam: *(not linked)*");
+                        } else {
+                            sb.append("SteamID64: `").append(steam.get()).append("`");
+                            appendFilteredGetplayerdataForWhois(sb, steam.get());
+                        }
+                        database.appendAudit(event.getUser().getId(), "mod_whois", "discord:" + target.getId());
+                        hookEditEphemeral(hook, sb.toString());
+                    } catch (SQLException e) {
+                        LOG.error("mod whois", e);
+                        hookEditEphemeral(hook, "Database error — check logs.");
+                    }
+                }, f -> LOG.error("deferReply (evrima-mod whois) failed", f));
+                return;
+            }
+            String query = playerRaw.strip();
             event.deferReply(true).queue(hook -> {
                 try {
-                    Optional<String> steam = database.findSteamIdForDiscord(target.getId());
+                    String steam = resolveAdminPlayerTarget(query);
                     StringBuilder sb = new StringBuilder();
-                    sb.append("Discord: ").append(target.getName()).append(" (").append(target.getId()).append(")\n");
-                    if (steam.isEmpty()) {
-                        sb.append("Steam: *(not linked)*");
-                    } else {
-                        sb.append("SteamID64: `").append(steam.get()).append("`");
-                        try {
-                            String live = rcon.run("getplayerdata " + steam.get());
-                            sb.append("\n\n`getplayerdata`:\n```\n").append(truncate(live, 1500)).append("\n```");
-                        } catch (IOException e) {
-                            sb.append("\n\n*(RCON getplayerdata failed: ").append(e.getMessage()).append(")*");
-                        }
-                    }
-                    database.appendAudit(event.getUser().getId(), "mod_whois", target.getId());
+                    sb.append("**Lookup:** `").append(truncate(query.replace("`", "'"), 200)).append("`\n");
+                    sb.append("**SteamID64:** `").append(steam).append("`");
+                    appendLinkedDiscordLineForSteam(sb, event.getJDA(), steam);
+                    appendFilteredGetplayerdataForWhois(sb, steam);
+                    database.appendAudit(event.getUser().getId(), "mod_whois", "player:" + truncate(query, 240));
                     hookEditEphemeral(hook, sb.toString());
+                } catch (IOException e) {
+                    LOG.warn("mod whois RCON: {}", e.toString());
+                    hookEditEphemeral(hook, "RCON failed: " + truncate(e.getMessage(), 1800));
+                } catch (IllegalStateException e) {
+                    hookEditEphemeral(hook, truncate(e.getMessage(), 2000));
                 } catch (SQLException e) {
-                    LOG.error("mod whois", e);
+                    LOG.error("mod whois audit", e);
                     hookEditEphemeral(hook, "Database error — check logs.");
                 }
             }, f -> LOG.error("deferReply (evrima-mod whois) failed", f));
@@ -836,6 +894,67 @@ public final class BotListener extends ListenerAdapter {
             sb.append(ALPH.charAt(secureRandom.nextInt(ALPH.length())));
         }
         return sb.toString();
+    }
+
+    /**
+     * If this SteamID64 is linked in {@code steam_links}, append a line with Discord username, mention, and id.
+     */
+    private void appendLinkedDiscordLineForSteam(StringBuilder sb, JDA jda, String steamId64) throws SQLException {
+        Optional<String> linked = database.findDiscordForSteam(steamId64.trim());
+        if (linked.isEmpty()) {
+            sb.append("\n**Discord:** *(not linked in this bot)*");
+            return;
+        }
+        String did = linked.get();
+        try {
+            long uid = Long.parseLong(did);
+            User du = jda.retrieveUserById(uid).complete();
+            sb.append("\n**Discord:** ").append(du.getName()).append(" — ").append(du.getAsMention()).append(" (`")
+                    .append(did).append("`)");
+        } catch (NumberFormatException e) {
+            sb.append("\n**Discord:** stored link id `").append(did).append("` *(not a valid Discord snowflake)*");
+        } catch (RuntimeException e) {
+            LOG.debug("whois: retrieveUserById {} failed: {}", did, e.toString());
+            sb.append("\n**Discord:** <@").append(did).append("> (`").append(did).append("`)");
+        }
+    }
+
+    private static void appendIpLineFromWhoisPlayerdata(StringBuilder sb, String filteredBody) {
+        Optional<String> ip = PlayerdataIpExtract.preferredIpv4(filteredBody);
+        if (ip.isPresent()) {
+            sb.append("\n**IP:** `").append(ip.get()).append("` *(from getplayerdata)*");
+        } else {
+            sb.append("\n**IP:** *(not present in getplayerdata text)*");
+        }
+    }
+
+    /**
+     * Reloads {@code config.yml} and {@code species-taxonomy.yml} like a Minecraft {@code /reload} — no process restart.
+     */
+    private void reloadYamlFromDisk() throws IOException {
+        synchronized (live) {
+            live.reloadFromDisk();
+            population.reloadTaxonomyFromDisk();
+            speciesControl.invalidateConfigCache();
+            corpseWipe.onConfigReloaded();
+        }
+    }
+
+    private void appendFilteredGetplayerdataForWhois(StringBuilder sb, String steamId64) {
+        try {
+            String live = rcon.run("getplayerdata " + steamId64);
+            String filtered = EvrimaRcon.filterGetplayerdataResponseForSteamId(live, steamId64);
+            if (filtered.isEmpty()) {
+                sb.append("\n\n*(No `getplayerdata` row for SteamID `").append(steamId64)
+                        .append("` — usually not spawned in yet, or this build’s `PlayerID` differs from SteamID64.)*");
+            } else {
+                appendIpLineFromWhoisPlayerdata(sb, filtered);
+                sb.append("\n\n`getplayerdata`:\n```\n")
+                        .append(truncate(filtered, 1500)).append("\n```");
+            }
+        } catch (IOException e) {
+            sb.append("\n\n*(RCON getplayerdata failed: ").append(e.getMessage()).append(")*");
+        }
     }
 
     /**

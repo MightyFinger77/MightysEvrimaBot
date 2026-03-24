@@ -30,8 +30,46 @@ public final class ConfigYamlUpdater {
         ConfigYamlLineEdit.setSpeciesPopulationControlEnabled(configYaml, enabled);
     }
 
-    public static void setSpeciesCap(Path configYaml, String species, int cap) throws IOException {
-        ConfigYamlLineEdit.setSpeciesCap(configYaml, species, cap, null);
+    /**
+     * Resolves a Discord-typed species name to the exact key used in the bundled default {@code config.yml}
+     * {@code species_population_control.caps} block (PascalCase, etc.). Use this before slash-command replies so the
+     * confirmed name matches the file.
+     *
+     * @throws IllegalArgumentException if blank or not one of the bundled roster species (case-insensitive match)
+     * @throws IOException if the bundled template cannot be read
+     */
+    public static String requireCanonicalSpeciesCapKey(String speciesQuery) throws IOException {
+        if (speciesQuery == null) {
+            throw new IllegalArgumentException("species is empty.");
+        }
+        String s = speciesQuery.trim();
+        if (s.isEmpty()) {
+            throw new IllegalArgumentException("species is empty.");
+        }
+        Map<String, Object> caps = bundledSpeciesCaps();
+        String key = findKeyCaseInsensitive(caps, s);
+        if (key == null) {
+            throw new IllegalArgumentException(
+                    "Unknown species \"" + s + "\". It must be one of the names under species_population_control.caps "
+                            + "in the bundled default config (match is case-insensitive). No change was written.");
+        }
+        return key;
+    }
+
+    /**
+     * Writes a cap for a species already validated via {@link #requireCanonicalSpeciesCapKey(String)}.
+     * New lines use the bundled spelling; existing lines keep their on-disk key casing (see {@link ConfigYamlLineEdit}).
+     */
+    public static void setSpeciesCapWithBundledKey(Path configYaml, String canonicalSpeciesKey, int cap) throws IOException {
+        Objects.requireNonNull(canonicalSpeciesKey, "canonicalSpeciesKey");
+        ConfigYamlLineEdit.setSpeciesCap(configYaml, canonicalSpeciesKey, cap, canonicalSpeciesKey);
+    }
+
+    /**
+     * Validates against the bundled roster, then updates {@code species_population_control.caps}.
+     */
+    public static void setSpeciesCap(Path configYaml, String speciesQuery, int cap) throws IOException {
+        setSpeciesCapWithBundledKey(configYaml, requireCanonicalSpeciesCapKey(speciesQuery), cap);
     }
 
     /**
@@ -41,19 +79,18 @@ public final class ConfigYamlUpdater {
         Objects.requireNonNull(species, "species");
         String s = species.trim();
         if (s.isEmpty()) {
-            throw new IOException("species is empty");
+            throw new IllegalArgumentException("species is empty.");
         }
-        Map<String, Object> ex = loadBundledExampleRoot();
-        Map<String, Object> exSp = mapOrEmpty(ex.get("species_population_control"));
-        Map<String, Object> exCaps = mapOrEmpty(exSp.get("caps"));
-        Integer def = null;
+        Map<String, Object> exCaps = bundledSpeciesCaps();
         String exKey = findKeyCaseInsensitive(exCaps, s);
-        if (exKey != null) {
-            def = yamlInt(exCaps.get(exKey));
+        if (exKey == null) {
+            throw new IllegalArgumentException(
+                    "Unknown species \"" + s + "\". It must be one of the names under species_population_control.caps "
+                            + "in the bundled default config. No change was written.");
         }
+        Integer def = yamlInt(exCaps.get(exKey));
         int value = def != null ? Math.max(0, def) : 0;
-        String insertKey = exKey != null ? exKey : s;
-        ConfigYamlLineEdit.setSpeciesCap(configYaml, s, value, insertKey);
+        ConfigYamlLineEdit.setSpeciesCap(configYaml, exKey, value, exKey);
     }
 
     public static void setScheduledWipecorpsesEnabled(Path configYaml, String mode) throws IOException {
@@ -179,6 +216,12 @@ public final class ConfigYamlUpdater {
             return (Map<String, Object>) m;
         }
         return Map.of();
+    }
+
+    private static Map<String, Object> bundledSpeciesCaps() throws IOException {
+        Map<String, Object> ex = loadBundledExampleRoot();
+        Map<String, Object> exSp = mapOrEmpty(ex.get("species_population_control"));
+        return mapOrEmpty(exSp.get("caps"));
     }
 
     private static String findKeyCaseInsensitive(Map<String, Object> caps, String species) {

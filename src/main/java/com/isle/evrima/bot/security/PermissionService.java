@@ -91,8 +91,8 @@ public final class PermissionService {
                     + formatMemberRoleIds(member) + "\n" + formatConfiguredRoleSummary()
                     + "\n\nUse `/evrima account debug` to compare IDs.";
         }
-        return base + "\n\n(Matched configured staff role id(s): " + matches + " — if you still see this, "
-                + "reload config or restart the bot after editing `config.yml`.)";
+        return base + "\n\n(Matched configured staff role id(s): " + matches + " — if you still see this after editing "
+                + "`config.yml`, run `/evrima-admin reload` or restart the bot.)";
     }
 
     public String denyModeratorMessage(Member member) {

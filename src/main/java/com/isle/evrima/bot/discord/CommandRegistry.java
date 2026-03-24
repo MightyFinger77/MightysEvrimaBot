@@ -69,8 +69,9 @@ public final class CommandRegistry {
     private static CommandData modEvrima() {
         return Commands.slash("evrima-mod", "Moderation — whois, Discord timeouts (bot checks config roles)")
                 .addSubcommands(
-                        new SubcommandData("whois", "Linked Steam + optional getplayerdata")
-                                .addOption(OptionType.USER, "user", "Discord user", true),
+                        new SubcommandData("whois", "Linked Steam + getplayerdata — Discord **or** in-game / SteamID")
+                                .addOption(OptionType.USER, "user", "Discord user (leave empty if you use player)", false)
+                                .addOption(OptionType.STRING, "player", "SteamID64 or in-game name from live playerlist (omit if you use user)", false),
                         new SubcommandData("timeout", "Discord timeout (not in-game)")
                                 .addOption(OptionType.USER, "user", "Member to timeout", true)
                                 .addOption(OptionType.INTEGER, "minutes", "1–40320 (28d max)", true)
@@ -96,6 +97,7 @@ public final class CommandRegistry {
                         new SubcommandData("getplayer", "Dump player/server fields (RCON getplayerdata)")
                                 .addOption(OptionType.STRING, "player", "SteamID64 or in-game name (from live playerlist)", true),
                         new SubcommandData("wipecorpses", "Remove corpses / cleanup bodies (RCON wipecorpses)"),
+                        new SubcommandData("reload", "Reload config.yml + species-taxonomy.yml from disk (manual edits)"),
                         new SubcommandData("save", "Tell the game to save (RCON save)"),
                         new SubcommandData("unlink", "Remove this bot’s stored Steam link for a Discord user (not in-game)")
                                 .addOption(OptionType.USER, "user", "Discord user", true),
