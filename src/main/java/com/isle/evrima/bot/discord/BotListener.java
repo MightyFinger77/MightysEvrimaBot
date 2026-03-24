@@ -9,6 +9,8 @@ import com.isle.evrima.bot.ecosystem.PopulationDashboardService;
 import com.isle.evrima.bot.ecosystem.SpeciesTaxonomy;
 import com.isle.evrima.bot.rcon.EvrimaRcon;
 import com.isle.evrima.bot.rcon.RconService;
+import com.isle.evrima.bot.schedule.ScheduledCorpseWipeScheduler;
+import com.isle.evrima.bot.schedule.SpeciesPopulationControlScheduler;
 import com.isle.evrima.bot.security.PermissionService;
 import com.isle.evrima.bot.security.StaffTier;
 import net.dv8tion.jda.api.entities.Member;
@@ -29,6 +31,8 @@ import java.time.Duration;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ThreadLocalRandom;
 
@@ -36,12 +40,23 @@ public final class BotListener extends ListenerAdapter {
 
     private static final Logger LOG = LoggerFactory.getLogger(BotListener.class);
     private static final String ALPH = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    private static final String KV_SPECIES_CONTROL_ENABLED = "species_population_control_runtime_enabled";
+    private static final String KV_SPECIES_CAP_OVERRIDE_PREFIX = "species_population_control_cap_override:";
+    private static final String KV_CORPSE_WIPE_ENABLED = "scheduled_wipecorpses_runtime_enabled";
+    private static final String KV_CORPSE_WIPE_INTERVAL = "scheduled_wipecorpses_runtime_interval_minutes";
+    private static final String KV_CORPSE_WIPE_WARN = "scheduled_wipecorpses_runtime_warn_before_minutes";
+    private static final String KV_CORPSE_WIPE_MESSAGE = "scheduled_wipecorpses_runtime_announce_message";
+    private static final String KV_CORPSE_WIPE_DYN_MAX = "scheduled_wipecorpses_runtime_dynamic_max_players";
+    private static final String KV_CORPSE_WIPE_DYN_PCT = "scheduled_wipecorpses_runtime_dynamic_enable_percent";
+    private static final String KV_CORPSE_WIPE_DYN_GRACE = "scheduled_wipecorpses_runtime_dynamic_disable_grace_seconds";
 
     private final BotConfig config;
     private final Database database;
     private final RconService rcon;
     private final PermissionService permissions;
     private final PopulationDashboardService population;
+    private final SpeciesPopulationControlScheduler speciesControl;
+    private final ScheduledCorpseWipeScheduler corpseWipe;
     private final SecureRandom secureRandom = new SecureRandom();
 
     public BotListener(
@@ -49,13 +64,17 @@ public final class BotListener extends ListenerAdapter {
             Database database,
             RconService rcon,
             PermissionService permissions,
-            PopulationDashboardService population
+            PopulationDashboardService population,
+            SpeciesPopulationControlScheduler speciesControl,
+            ScheduledCorpseWipeScheduler corpseWipe
     ) {
         this.config = config;
         this.database = database;
         this.rcon = rcon;
         this.permissions = permissions;
         this.population = population;
+        this.speciesControl = speciesControl;
+        this.corpseWipe = corpseWipe;
     }
 
     @Override
@@ -337,6 +356,188 @@ public final class BotListener extends ListenerAdapter {
                                 database.appendAudit(event.getUser().getId(), "rcon_toggleailearning", "");
                                 hookEditEphemeral(hook, "RCON `toggleailearning`:\n```\n" + truncate(out, 1800) + "\n```");
                             }
+                            case "species-control" -> {
+                                String mode = requiredString(event, "mode").trim().toLowerCase();
+                                if ("status".equals(mode)) {
+                                    hookEditEphemeral(hook, speciesControlStatusText());
+                                    break;
+                                }
+                                if ("on".equals(mode) || "enable".equals(mode)) {
+                                    if (!speciesControl.hasConfiguredCaps()) {
+                                        hookEditEphemeral(hook, "species_population_control has no configured caps. Set `species_population_control.caps` first.");
+                                        break;
+                                    }
+                                    speciesControl.setEnabled(true);
+                                    database.putBotKv(KV_SPECIES_CONTROL_ENABLED, "true");
+                                    database.appendAudit(event.getUser().getId(), "species_control_toggle", "on");
+                                    hookEditEphemeral(hook, "Species population control: **ON**");
+                                    break;
+                                }
+                                if ("off".equals(mode) || "disable".equals(mode)) {
+                                    speciesControl.setEnabled(false);
+                                    database.putBotKv(KV_SPECIES_CONTROL_ENABLED, "false");
+                                    database.appendAudit(event.getUser().getId(), "species_control_toggle", "off");
+                                    hookEditEphemeral(hook, "Species population control: **OFF**");
+                                    break;
+                                }
+                                hookEditEphemeral(hook, "Invalid mode. Use `on`, `off`, or `status`.");
+                            }
+                            case "species-cap-set" -> {
+                                String species = requiredString(event, "species").trim();
+                                int cap = (int) requiredLong(event, "cap");
+                                if (cap < 0 || cap > 500) {
+                                    hookEditEphemeral(hook, "cap must be between 0 and 500.");
+                                    break;
+                                }
+                                speciesControl.setCapOverride(species, cap);
+                                database.putBotKv(KV_SPECIES_CAP_OVERRIDE_PREFIX + species.toLowerCase(Locale.ROOT), String.valueOf(cap));
+                                database.appendAudit(event.getUser().getId(), "species_cap_set", species + "=" + cap);
+                                hookEditEphemeral(hook, "Set runtime species cap: **" + species + " = " + cap + "**");
+                            }
+                            case "species-cap-clear" -> {
+                                String species = requiredString(event, "species").trim();
+                                speciesControl.clearCapOverride(species);
+                                database.deleteBotKv(KV_SPECIES_CAP_OVERRIDE_PREFIX + species.toLowerCase(Locale.ROOT));
+                                database.appendAudit(event.getUser().getId(), "species_cap_clear", species);
+                                hookEditEphemeral(hook, "Cleared runtime species cap override for **" + species + "**.");
+                            }
+                            case "species-cap-list" -> hookEditEphemeral(hook, speciesCapListText());
+                            case "corpse-wipe-control" -> {
+                                String mode = requiredString(event, "mode").trim().toLowerCase(Locale.ROOT);
+                                if ("status".equals(mode)) {
+                                    hookEditEphemeral(hook, corpseWipeStatusText());
+                                    break;
+                                }
+                                if ("on".equals(mode) || "enable".equals(mode) || "true".equals(mode)) {
+                                    corpseWipe.setEnabledMode("true");
+                                    database.putBotKv(KV_CORPSE_WIPE_ENABLED, "true");
+                                    database.appendAudit(event.getUser().getId(), "corpse_wipe_toggle", "on");
+                                    hookEditEphemeral(hook, "Scheduled corpse wipes: **ON**");
+                                    break;
+                                }
+                                if ("off".equals(mode) || "disable".equals(mode) || "false".equals(mode)) {
+                                    corpseWipe.setEnabledMode("false");
+                                    database.putBotKv(KV_CORPSE_WIPE_ENABLED, "false");
+                                    database.appendAudit(event.getUser().getId(), "corpse_wipe_toggle", "off");
+                                    hookEditEphemeral(hook, "Scheduled corpse wipes: **OFF**");
+                                    break;
+                                }
+                                if ("dynamic".equals(mode)) {
+                                    corpseWipe.setEnabledMode("dynamic");
+                                    database.putBotKv(KV_CORPSE_WIPE_ENABLED, "dynamic");
+                                    database.appendAudit(event.getUser().getId(), "corpse_wipe_toggle", "dynamic");
+                                    hookEditEphemeral(hook, "Scheduled corpse wipes: **DYNAMIC**");
+                                    break;
+                                }
+                                hookEditEphemeral(hook, "Invalid mode. Use `on`, `off`, `dynamic`, or `status`.");
+                            }
+                            case "corpse-wipe-set" -> {
+                                String key = requiredString(event, "key").trim().toLowerCase(Locale.ROOT);
+                                String value = requiredString(event, "value").trim();
+                                switch (key) {
+                                    case "interval", "interval_minutes" -> {
+                                        int v = parseIntInRange(value, 0, 10_080, "interval_minutes");
+                                        corpseWipe.setIntervalMinutes(v);
+                                        database.putBotKv(KV_CORPSE_WIPE_INTERVAL, String.valueOf(v));
+                                        database.appendAudit(event.getUser().getId(), "corpse_wipe_set", "interval_minutes=" + v);
+                                        hookEditEphemeral(hook, "Set scheduled_wipecorpses.interval_minutes = **" + v + "**");
+                                    }
+                                    case "warn", "warn_before", "warn_before_minutes" -> {
+                                        int v = parseIntInRange(value, 0, 1_440, "warn_before_minutes");
+                                        corpseWipe.setWarnBeforeMinutes(v);
+                                        database.putBotKv(KV_CORPSE_WIPE_WARN, String.valueOf(v));
+                                        database.appendAudit(event.getUser().getId(), "corpse_wipe_set", "warn_before_minutes=" + v);
+                                        hookEditEphemeral(hook, "Set scheduled_wipecorpses.warn_before_minutes = **" + v + "**");
+                                    }
+                                    case "message", "announce", "announce_message" -> {
+                                        corpseWipe.setAnnounceMessage(value);
+                                        database.putBotKv(KV_CORPSE_WIPE_MESSAGE, value);
+                                        database.appendAudit(event.getUser().getId(), "corpse_wipe_set", "announce_message");
+                                        hookEditEphemeral(hook, "Updated scheduled_wipecorpses.announce_message.");
+                                    }
+                                    case "dynamic_max_players" -> {
+                                        int v = parseIntInRange(value, 0, 1000, "dynamic_max_players");
+                                        corpseWipe.setDynamicMaxPlayers(v);
+                                        database.putBotKv(KV_CORPSE_WIPE_DYN_MAX, String.valueOf(v));
+                                        database.appendAudit(event.getUser().getId(), "corpse_wipe_set", "dynamic_max_players=" + v);
+                                        hookEditEphemeral(hook, "Set scheduled_wipecorpses.dynamic_max_players = **" + v + "**");
+                                    }
+                                    case "dynamic_enable_percent" -> {
+                                        int v = parseIntInRange(value, 0, 100, "dynamic_enable_percent");
+                                        corpseWipe.setDynamicEnablePercent(v);
+                                        database.putBotKv(KV_CORPSE_WIPE_DYN_PCT, String.valueOf(v));
+                                        database.appendAudit(event.getUser().getId(), "corpse_wipe_set", "dynamic_enable_percent=" + v);
+                                        hookEditEphemeral(hook, "Set scheduled_wipecorpses.dynamic_enable_percent = **" + v + "%**");
+                                    }
+                                    case "dynamic_disable_grace_seconds" -> {
+                                        int v = parseIntInRange(value, 0, 600, "dynamic_disable_grace_seconds");
+                                        corpseWipe.setDynamicDisableGraceSeconds(v);
+                                        database.putBotKv(KV_CORPSE_WIPE_DYN_GRACE, String.valueOf(v));
+                                        database.appendAudit(event.getUser().getId(), "corpse_wipe_set", "dynamic_disable_grace_seconds=" + v);
+                                        hookEditEphemeral(hook, "Set scheduled_wipecorpses.dynamic_disable_grace_seconds = **" + v + "s**");
+                                    }
+                                    default -> hookEditEphemeral(hook, "Unknown key. Use `interval_minutes`, `warn_before_minutes`, `announce_message`, `dynamic_max_players`, `dynamic_enable_percent`, or `dynamic_disable_grace_seconds`.");
+                                }
+                            }
+                            case "corpse-wipe-clear" -> {
+                                String key = requiredString(event, "key").trim().toLowerCase(Locale.ROOT);
+                                switch (key) {
+                                    case "interval", "interval_minutes" -> {
+                                        corpseWipe.setIntervalMinutes(config.scheduledWipecorpsesIntervalMinutes());
+                                        database.deleteBotKv(KV_CORPSE_WIPE_INTERVAL);
+                                        hookEditEphemeral(hook, "Cleared runtime override for interval_minutes (reverted to config).");
+                                    }
+                                    case "warn", "warn_before", "warn_before_minutes" -> {
+                                        corpseWipe.setWarnBeforeMinutes(config.scheduledWipecorpsesWarnBeforeMinutes());
+                                        database.deleteBotKv(KV_CORPSE_WIPE_WARN);
+                                        hookEditEphemeral(hook, "Cleared runtime override for warn_before_minutes (reverted to config).");
+                                    }
+                                    case "message", "announce", "announce_message" -> {
+                                        corpseWipe.setAnnounceMessage(config.scheduledWipecorpsesAnnounceMessage());
+                                        database.deleteBotKv(KV_CORPSE_WIPE_MESSAGE);
+                                        hookEditEphemeral(hook, "Cleared runtime override for announce_message (reverted to config).");
+                                    }
+                                    case "enabled" -> {
+                                        corpseWipe.setEnabledMode(config.scheduledWipecorpsesEnabledMode());
+                                        database.deleteBotKv(KV_CORPSE_WIPE_ENABLED);
+                                        hookEditEphemeral(hook, "Cleared runtime override for enabled (reverted to config).");
+                                    }
+                                    case "dynamic_max_players" -> {
+                                        corpseWipe.setDynamicMaxPlayers(config.scheduledWipecorpsesDynamicMaxPlayers());
+                                        database.deleteBotKv(KV_CORPSE_WIPE_DYN_MAX);
+                                        hookEditEphemeral(hook, "Cleared runtime override for dynamic_max_players (reverted to config).");
+                                    }
+                                    case "dynamic_enable_percent" -> {
+                                        corpseWipe.setDynamicEnablePercent(config.scheduledWipecorpsesDynamicEnablePercent());
+                                        database.deleteBotKv(KV_CORPSE_WIPE_DYN_PCT);
+                                        hookEditEphemeral(hook, "Cleared runtime override for dynamic_enable_percent (reverted to config).");
+                                    }
+                                    case "dynamic_disable_grace_seconds" -> {
+                                        corpseWipe.setDynamicDisableGraceSeconds(config.scheduledWipecorpsesDynamicDisableGraceSeconds());
+                                        database.deleteBotKv(KV_CORPSE_WIPE_DYN_GRACE);
+                                        hookEditEphemeral(hook, "Cleared runtime override for dynamic_disable_grace_seconds (reverted to config).");
+                                    }
+                                    case "all" -> {
+                                        corpseWipe.setEnabledMode(config.scheduledWipecorpsesEnabledMode());
+                                        corpseWipe.setIntervalMinutes(config.scheduledWipecorpsesIntervalMinutes());
+                                        corpseWipe.setWarnBeforeMinutes(config.scheduledWipecorpsesWarnBeforeMinutes());
+                                        corpseWipe.setAnnounceMessage(config.scheduledWipecorpsesAnnounceMessage());
+                                        corpseWipe.setDynamicMaxPlayers(config.scheduledWipecorpsesDynamicMaxPlayers());
+                                        corpseWipe.setDynamicEnablePercent(config.scheduledWipecorpsesDynamicEnablePercent());
+                                        corpseWipe.setDynamicDisableGraceSeconds(config.scheduledWipecorpsesDynamicDisableGraceSeconds());
+                                        database.deleteBotKv(KV_CORPSE_WIPE_ENABLED);
+                                        database.deleteBotKv(KV_CORPSE_WIPE_INTERVAL);
+                                        database.deleteBotKv(KV_CORPSE_WIPE_WARN);
+                                        database.deleteBotKv(KV_CORPSE_WIPE_MESSAGE);
+                                        database.deleteBotKv(KV_CORPSE_WIPE_DYN_MAX);
+                                        database.deleteBotKv(KV_CORPSE_WIPE_DYN_PCT);
+                                        database.deleteBotKv(KV_CORPSE_WIPE_DYN_GRACE);
+                                        hookEditEphemeral(hook, "Cleared all scheduled_wipecorpses runtime overrides (reverted to config).");
+                                    }
+                                    default -> hookEditEphemeral(hook, "Unknown key. Use `enabled`, `interval_minutes`, `warn_before_minutes`, `announce_message`, `dynamic_max_players`, `dynamic_enable_percent`, `dynamic_disable_grace_seconds`, or `all`.");
+                                }
+                                database.appendAudit(event.getUser().getId(), "corpse_wipe_clear", key);
+                            }
                             default -> hookEditEphemeral(hook, "Unknown admin subcommand.");
                         }
                     } catch (SQLException e) {
@@ -502,6 +703,57 @@ public final class BotListener extends ListenerAdapter {
             t = "(no output)";
         }
         hook.editOriginal(t).queue(null, err -> LOG.warn("hook.editOriginal failed: {}", err.toString()));
+    }
+
+    private String speciesControlStatusText() {
+        String state = speciesControl.isEnabled() ? "ON" : "OFF";
+        return "Species population control: **" + state + "**\n"
+                + "Configured caps: **" + speciesControl.effectiveCapsReadOnly().size() + "** species\n"
+                + "Interval: **" + config.speciesPopulationControlIntervalSeconds() + "s**\n"
+                + "Unlock offset: **" + config.speciesPopulationControlUnlockBelowOffset() + "**\n"
+                + "Announce changes: **" + config.speciesPopulationControlAnnounceChanges() + "**";
+    }
+
+    private String speciesCapListText() {
+        Map<String, Integer> effective = speciesControl.effectiveCapsReadOnly();
+        Map<String, Integer> overrides = speciesControl.listCapOverrides();
+        StringBuilder sb = new StringBuilder();
+        sb.append("**Species caps (effective):**\n");
+        for (Map.Entry<String, Integer> e : effective.entrySet()) {
+            String mark = overrides.containsKey(e.getKey()) ? " _(override)_" : "";
+            sb.append("- ").append(e.getKey()).append(": **").append(e.getValue()).append("**").append(mark).append("\n");
+        }
+        if (overrides.isEmpty()) {
+            sb.append("\nNo runtime overrides.");
+        }
+        return truncate(sb.toString().strip(), 2000);
+    }
+
+    private String corpseWipeStatusText() {
+        int interval = corpseWipe.intervalMinutes();
+        int warn = corpseWipe.warnBeforeMinutes();
+        boolean warningActive = warn > 0 && interval > warn;
+        return "Scheduled corpse wipes mode: **" + corpseWipe.enabledMode().toUpperCase(Locale.ROOT) + "**"
+                + " (effective now: **" + (corpseWipe.isEffectivelyEnabled() ? "ON" : "OFF") + "**)\n"
+                + "Interval: **" + interval + " min**\n"
+                + "Warn before: **" + warn + " min**"
+                + (warningActive ? "" : " _(warning disabled with current values)_")
+                + "\nDynamic max players: **" + corpseWipe.dynamicMaxPlayers() + "**"
+                + "\nDynamic enable percent: **" + corpseWipe.dynamicEnablePercent() + "%**"
+                + "\nDynamic grace (both ways): **" + corpseWipe.dynamicDisableGraceSeconds() + "s**"
+                + "\nAnnounce message: `" + truncate(corpseWipe.announceMessage(), 250) + "`";
+    }
+
+    private static int parseIntInRange(String s, int min, int max, String label) {
+        try {
+            int v = Integer.parseInt(s.trim());
+            if (v < min || v > max) {
+                throw new IllegalStateException(label + " must be between " + min + " and " + max + ".");
+            }
+            return v;
+        } catch (NumberFormatException nfe) {
+            throw new IllegalStateException(label + " must be a number.");
+        }
     }
 
     /** Tiny helper to avoid java.util.OptionalLong + isEmpty() verbosity across Java versions. */

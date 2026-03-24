@@ -53,6 +53,27 @@ public final class BotConfig {
     /** Slot cap used only for fill %; required when adaptive AI density is enabled. */
     private final int adaptiveAiDensityMaxPlayers;
     private final List<AdaptiveAiDensityTier> adaptiveAiDensityTiers;
+    /** Dynamically remove/add species from playables list based on live counts. */
+    private final boolean speciesPopulationControlEnabled;
+    /** Tick interval for species-cap checks (seconds). */
+    private final int speciesPopulationControlIntervalSeconds;
+    /**
+     * Unlock when count is {@code <= cap - unlock_below_offset}. Example cap 15 + offset 1 unlocks at 14 or lower.
+     * This hysteresis avoids lock/unlock flapping at the exact cap boundary.
+     */
+    private final int speciesPopulationControlUnlockBelowOffset;
+    /** Optional in-game announce on lock/unlock events (can be spammy on busy servers). */
+    private final boolean speciesPopulationControlAnnounceChanges;
+    /** Species display name -> cap. 0 means unmanaged/unlimited. */
+    private final Map<String, Integer> speciesPopulationCaps;
+    /** Runtime default for scheduled corpse wipes: {@code true}, {@code false}, or {@code dynamic}. */
+    private final String scheduledWipecorpsesEnabledMode;
+    /** Used only when enabled mode is {@code dynamic}. */
+    private final int scheduledWipecorpsesDynamicMaxPlayers;
+    /** Used only when enabled mode is {@code dynamic}. */
+    private final int scheduledWipecorpsesDynamicEnablePercent;
+    /** Used only when enabled mode is {@code dynamic}; avoids rapid off/on flapping near threshold. */
+    private final int scheduledWipecorpsesDynamicDisableGraceSeconds;
     /** 0 = disabled */
     private final int scheduledWipecorpsesIntervalMinutes;
     /** 0 = no in-game announce before wipe */
@@ -98,6 +119,15 @@ public final class BotConfig {
             int adaptiveAiDensityIntervalMinutes,
             int adaptiveAiDensityMaxPlayers,
             List<AdaptiveAiDensityTier> adaptiveAiDensityTiers,
+            boolean speciesPopulationControlEnabled,
+            int speciesPopulationControlIntervalSeconds,
+            int speciesPopulationControlUnlockBelowOffset,
+            boolean speciesPopulationControlAnnounceChanges,
+            Map<String, Integer> speciesPopulationCaps,
+            String scheduledWipecorpsesEnabledMode,
+            int scheduledWipecorpsesDynamicMaxPlayers,
+            int scheduledWipecorpsesDynamicEnablePercent,
+            int scheduledWipecorpsesDynamicDisableGraceSeconds,
             int scheduledWipecorpsesIntervalMinutes,
             int scheduledWipecorpsesWarnBeforeMinutes,
             String scheduledWipecorpsesAnnounceMessage,
@@ -136,6 +166,15 @@ public final class BotConfig {
         this.adaptiveAiDensityIntervalMinutes = adaptiveAiDensityIntervalMinutes;
         this.adaptiveAiDensityMaxPlayers = adaptiveAiDensityMaxPlayers;
         this.adaptiveAiDensityTiers = List.copyOf(adaptiveAiDensityTiers);
+        this.speciesPopulationControlEnabled = speciesPopulationControlEnabled;
+        this.speciesPopulationControlIntervalSeconds = speciesPopulationControlIntervalSeconds;
+        this.speciesPopulationControlUnlockBelowOffset = speciesPopulationControlUnlockBelowOffset;
+        this.speciesPopulationControlAnnounceChanges = speciesPopulationControlAnnounceChanges;
+        this.speciesPopulationCaps = Map.copyOf(speciesPopulationCaps);
+        this.scheduledWipecorpsesEnabledMode = scheduledWipecorpsesEnabledMode;
+        this.scheduledWipecorpsesDynamicMaxPlayers = scheduledWipecorpsesDynamicMaxPlayers;
+        this.scheduledWipecorpsesDynamicEnablePercent = scheduledWipecorpsesDynamicEnablePercent;
+        this.scheduledWipecorpsesDynamicDisableGraceSeconds = scheduledWipecorpsesDynamicDisableGraceSeconds;
         this.scheduledWipecorpsesIntervalMinutes = scheduledWipecorpsesIntervalMinutes;
         this.scheduledWipecorpsesWarnBeforeMinutes = scheduledWipecorpsesWarnBeforeMinutes;
         this.scheduledWipecorpsesAnnounceMessage = scheduledWipecorpsesAnnounceMessage;
@@ -249,10 +288,51 @@ public final class BotConfig {
             throw new IOException("adaptive_ai_density.enabled is true but max_players must be > 0 (server slot cap for fill %).");
         }
 
+        Map<String, Object> speciesControl = mapOrEmpty(root.get("species_population_control"));
+        boolean spEnabled = parseBooleanYaml(speciesControl.get("enabled"), false);
+        int spIntervalSec = (int) parseLong(speciesControl.get("interval_seconds"), 60L);
+        if (spIntervalSec < 10) {
+            spIntervalSec = 10;
+        }
+        if (spIntervalSec > 600) {
+            spIntervalSec = 600;
+        }
+        int spUnlockOffset = (int) parseLong(speciesControl.get("unlock_below_offset"), 1L);
+        if (spUnlockOffset < 0) {
+            spUnlockOffset = 0;
+        }
+        if (spUnlockOffset > 20) {
+            spUnlockOffset = 20;
+        }
+        boolean spAnnounce = parseBooleanYaml(speciesControl.get("announce_changes"), false);
+        Map<String, Integer> spCaps = parseSpeciesPopulationCaps(speciesControl.get("caps"));
+        if (spEnabled && spCaps.isEmpty()) {
+            throw new IOException("species_population_control.enabled is true but caps is empty (set at least one species cap > 0).");
+        }
+
         Map<String, Object> schedWipe = mapOrEmpty(root.get("scheduled_wipecorpses"));
         int wipeMin = (int) parseLong(schedWipe.get("interval_minutes"), 0L);
         if (wipeMin < 0) {
             wipeMin = 0;
+        }
+        String wipeEnabledMode = parseModeOnOffDynamic(schedWipe.get("enabled"), wipeMin > 0 ? "true" : "false");
+        int wipeDynMaxPlayers = (int) parseLong(schedWipe.get("dynamic_max_players"), 0L);
+        if (wipeDynMaxPlayers < 0) {
+            wipeDynMaxPlayers = 0;
+        }
+        int wipeDynPct = (int) parseLong(schedWipe.get("dynamic_enable_percent"), 75L);
+        if (wipeDynPct < 0) {
+            wipeDynPct = 0;
+        }
+        if (wipeDynPct > 100) {
+            wipeDynPct = 100;
+        }
+        int wipeDynGraceSec = (int) parseLong(schedWipe.get("dynamic_disable_grace_seconds"), 20L);
+        if (wipeDynGraceSec < 0) {
+            wipeDynGraceSec = 0;
+        }
+        if (wipeDynGraceSec > 600) {
+            wipeDynGraceSec = 600;
         }
         int warnBefore = (int) parseLong(schedWipe.get("warn_before_minutes"), 5L);
         if (warnBefore < 0) {
@@ -306,6 +386,15 @@ public final class BotConfig {
                 aaInterval,
                 aaMaxPlayers,
                 aaTiers,
+                spEnabled,
+                spIntervalSec,
+                spUnlockOffset,
+                spAnnounce,
+                spCaps,
+                wipeEnabledMode,
+                wipeDynMaxPlayers,
+                wipeDynPct,
+                wipeDynGraceSec,
                 wipeMin,
                 warnBefore,
                 wipeAnnounce,
@@ -414,6 +503,29 @@ public final class BotConfig {
         return Boolean.parseBoolean(s);
     }
 
+    private static String parseModeOnOffDynamic(Object v, String defaultMode) {
+        if (v == null) {
+            return defaultMode;
+        }
+        if (v instanceof Boolean b) {
+            return b ? "true" : "false";
+        }
+        String s = String.valueOf(v).trim().toLowerCase();
+        if (s.isEmpty()) {
+            return defaultMode;
+        }
+        if ("dynamic".equals(s)) {
+            return "dynamic";
+        }
+        if ("true".equals(s) || "on".equals(s) || "enable".equals(s) || "enabled".equals(s)) {
+            return "true";
+        }
+        if ("false".equals(s) || "off".equals(s) || "disable".equals(s) || "disabled".equals(s)) {
+            return "false";
+        }
+        return defaultMode;
+    }
+
     private static double parseDoubleYaml(Object v, double defaultVal) {
         if (v == null) {
             return defaultVal;
@@ -451,6 +563,29 @@ public final class BotConfig {
             out.add(new AdaptiveAiDensityTier(min, max, density));
         }
         return AdaptiveAiDensityTier.sortedCopy(out);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Integer> parseSpeciesPopulationCaps(Object capsObj) throws IOException {
+        if (!(capsObj instanceof Map<?, ?> raw) || raw.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, Integer> out = new java.util.LinkedHashMap<>();
+        for (Map.Entry<?, ?> e : raw.entrySet()) {
+            String name = stringOrEmpty(e.getKey());
+            if (name.isBlank()) {
+                continue;
+            }
+            int cap = (int) parseLong(e.getValue(), -1L);
+            if (cap < 0) {
+                throw new IOException("species_population_control.caps entry '" + name + "' is invalid (cap must be >= 0)");
+            }
+            if (cap == 0) {
+                continue;
+            }
+            out.put(name, cap);
+        }
+        return Map.copyOf(out);
     }
 
     private static List<Long> parseIdList(Object v) {
@@ -602,8 +737,48 @@ public final class BotConfig {
         return adaptiveAiDensityTiers;
     }
 
+    public boolean speciesPopulationControlEnabled() {
+        return speciesPopulationControlEnabled;
+    }
+
+    public int speciesPopulationControlIntervalSeconds() {
+        return speciesPopulationControlIntervalSeconds;
+    }
+
+    public int speciesPopulationControlUnlockBelowOffset() {
+        return speciesPopulationControlUnlockBelowOffset;
+    }
+
+    public boolean speciesPopulationControlAnnounceChanges() {
+        return speciesPopulationControlAnnounceChanges;
+    }
+
+    /** Display name -> cap; names are matched case-insensitively by the scheduler. */
+    public Map<String, Integer> speciesPopulationCaps() {
+        return speciesPopulationCaps;
+    }
+
     /**
      * Minutes between automatic RCON {@code wipecorpses}; {@code 0} disables the scheduler.
+     */
+    public String scheduledWipecorpsesEnabledMode() {
+        return scheduledWipecorpsesEnabledMode;
+    }
+
+    public int scheduledWipecorpsesDynamicMaxPlayers() {
+        return scheduledWipecorpsesDynamicMaxPlayers;
+    }
+
+    public int scheduledWipecorpsesDynamicEnablePercent() {
+        return scheduledWipecorpsesDynamicEnablePercent;
+    }
+
+    public int scheduledWipecorpsesDynamicDisableGraceSeconds() {
+        return scheduledWipecorpsesDynamicDisableGraceSeconds;
+    }
+
+    /**
+     * Minutes between automatic RCON {@code wipecorpses}; {@code 0} means no interval.
      */
     public int scheduledWipecorpsesIntervalMinutes() {
         return scheduledWipecorpsesIntervalMinutes;

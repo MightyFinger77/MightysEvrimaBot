@@ -1,3 +1,26 @@
+# ╭─────────────────────────────────────────────────────────────────────────────╮
+# │                                                                             │
+# │              ███████╗██╗   ██╗██████╗ ██╗███╗   ███╗ █████╗                 │
+# │              ██╔════╝██║   ██║██╔══██╗██║████╗ ████║██╔══██╗                │
+# │              █████╗  ██║   ██║██████╔╝██║██╔████╔██║███████║                │
+# │              ██╔══╝  ╚██╗ ██╔╝██╔══██╗██║██║╚██╔╝██║██╔══██║                │
+# │              ███████╗ ╚████╔╝ ██║  ██║██║██║ ╚═╝ ██║██║  ██║                │
+# │              ╚══════╝  ╚═══╝  ╚═╝  ╚═╝╚═╝╚═╝     ╚═╝╚═╝  ╚═╝                │
+# │                                                                             │
+# │                         ██████╗  ██████╗ ████████╗                          │
+# │                         ██╔══██╗██╔═══██╗╚══██╔══╝                          │
+# │                         ██████╔╝██║   ██║   ██║                             │
+# │                         ██╔══██╗██║   ██║   ██║                             │
+# │                         ██████╔╝╚██████╔╝   ██║                             │
+# │                         ╚═════╝  ╚═════╝    ╚═╝                             │
+# │                                                                             │
+# │      ✦ · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · ✦       │
+# │                                                                             │
+# │    ►  Discord Bridge · Ecosystem · Species Caps · Schedulers · RCON  ◄      │
+# │                                                                             │
+# │                        config for EvrimaServerBot                           │
+# ╰─────────────────────────────────────────────────────────────────────────────╯
+#
 # Copy to config.yml next to the JAR (or set working directory).
 
 discord:
@@ -75,11 +98,54 @@ adaptive_ai_density:
     - { min_percent: 50, max_percent: 79, density: 0.5 }
     - { min_percent: 80, max_percent: 100, density: 0.15 }
 
-# Optional: RCON wipecorpses on a timer (0 = off). Same command as /evrima-admin wipecorpses.
-# Timing is from JVM start (not persisted across restarts). With warn_before_minutes: 5 and
-# interval_minutes: 120, the first in-game announce is at ~115 min, wipe at ~120 min, then repeats.
+# Optional: dynamically lock/unlock specific species by editing RCON updateplayables from live ecosystem counts.
+# Lock rule: count >= cap => remove species from playables. Unlock rule: count <= (cap - unlock_below_offset).
+# Interval is in seconds for fast reaction (default 60). announce_changes can be noisy on busy servers.
+species_population_control:
+  enabled: false
+  interval_seconds: 60
+  unlock_below_offset: 1
+  announce_changes: false
+  # 0 means unlimited/unmanaged; omit keys you don't want managed.
+  # Defaults below use your current roster.
+  caps:
+    # Carnivores
+    Allosaurus: 16
+    Carnotaurus: 18
+    Ceratosaurus: 14
+    Deinosuchus: 14
+    Dilophosaurus: 0
+    Herrerasaurus: 0
+    Omniraptor: 18
+    Troodon: 0
+    Tyrannosaurus rex: 10
+    Pteranodon: 18
+    # Herbivores
+    Stegosaurus: 12
+    Tenontosaurus: 0
+    Hypsilophodon: 0
+    Pachycephalosaurus: 14
+    Diabloceratops: 0
+    Dryosaurus: 0
+    Maiasaura: 0
+    Triceratops: 10
+    # Omnivores
+    Gallimimus: 0
+    Beipiaosaurus: 0
+
+# Optional: RCON wipecorpses on a timer. Runtime admin commands can toggle/edit this without file access.
+# enabled accepts true/false/dynamic.
+# - true: always enabled
+# - false: always disabled
+# - dynamic: enabled only when online percent >= dynamic_enable_percent of dynamic_max_players
+# dynamic_disable_grace_seconds prevents rapid flapping near threshold.
+# In dynamic mode, the same grace applies both ways (enable + disable transitions).
 scheduled_wipecorpses:
-  interval_minutes: 0
+  enabled: dynamic
+  interval_minutes: 180
+  dynamic_max_players: 145
+  dynamic_enable_percent: 70
+  dynamic_disable_grace_seconds: 120
   # In-game announce (RCON announce) this many minutes before each wipe. 0 = no warning.
   # Must be less than interval_minutes or the warning is skipped (logged once at startup).
   warn_before_minutes: 5

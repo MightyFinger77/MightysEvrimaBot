@@ -12,10 +12,6 @@
 # Extend or override via ecosystem.taxonomy_path in config.yml (same schema).
 
 entries:
-  - display: Tyrannosaurus
-    diet: carnivore
-    emoji: 🦖
-    keys: [ Tyrannosaurus, Tyrannosaur, T. Rex, T-Rex ]
   - display: Allosaurus
     diet: carnivore
     emoji: 🦖
@@ -24,30 +20,10 @@ entries:
     diet: carnivore
     emoji: 🦖
     keys: [ Carnotaurus, Carno ]
-  - display: Giganotosaurus
-    diet: carnivore
-    emoji: 🦖
-    keys: [ Giganotosaurus, Giga ]
-  - display: Utahraptor
-    diet: carnivore
-    emoji: 🦎
-    keys: [ Utahraptor, Utah ]
-  - display: Deinonychus
-    diet: carnivore
-    emoji: 🦎
-    keys: [ Deinonychus ]
   - display: Deinosuchus
     diet: carnivore
     emoji: 🐊
     keys: [ Deinosuchus ]
-  - display: Suchomimus
-    diet: carnivore
-    emoji: 🐊
-    keys: [ Suchomimus, Sucho ]
-  - display: Baryonyx
-    diet: carnivore
-    emoji: 🐊
-    keys: [ Baryonyx ]
   - display: Ceratosaurus
     diet: carnivore
     emoji: 🦖
@@ -60,87 +36,59 @@ entries:
     diet: carnivore
     emoji: 🦖
     keys: [ Herrerasaurus, Herrera ]
-  - display: Concavenator
+  - display: Omniraptor
+    diet: carnivore
+    emoji: 🦎
+    keys: [ Omniraptor, Omni ]
+  - display: Troodon
+    diet: carnivore
+    emoji: 🦎
+    keys: [ Troodon, Troo ]
+  - display: Tyrannosaurus rex
     diet: carnivore
     emoji: 🦖
-    keys: [ Concavenator, Concav ]
-  - display: Spinosaurus
-    diet: carnivore
-    emoji: 🐊
-    keys: [ Spinosaurus, Spino ]
-  - display: Acrocanthosaurus
-    diet: carnivore
-    emoji: 🦖
-    keys: [ Acrocanthosaurus, Acro ]
-  - display: Alioramus
-    diet: carnivore
-    emoji: 🦖
-    keys: [ Alioramus ]
+    keys: [ Tyrannosaurus rex, Tyrannosaurus Rex, Tyrannosaurus, T. Rex, T-Rex, Trex ]
   - display: Pteranodon
     diet: carnivore
     emoji: 🦅
     keys: [ Pteranodon, Ptera ]
-  - display: Omniraptor
-    diet: omnivore
-    emoji: 🦎
-    keys: [ Omniraptor, Omni ]
-  - display: Gallimimus
-    diet: omnivore
-    emoji: 🐦
-    keys: [ Gallimimus, Galli ]
-  - display: Beipiaognathus
-    diet: omnivore
-    emoji: 🐦
-    keys: [ Beipiaognathus, Beipiao ]
-  - display: Triceratops
-    diet: herbivore
-    emoji: 🦏
-    keys: [ Triceratops, Trike ]
   - display: Stegosaurus
     diet: herbivore
     emoji: 🦕
     keys: [ Stegosaurus, Stego ]
-  - display: Ankylosaurus
-    diet: herbivore
-    emoji: 🐢
-    keys: [ Ankylosaurus, Anky ]
-  - display: Camarasaurus
+  - display: Tenontosaurus
     diet: herbivore
     emoji: 🦕
-    keys: [ Camarasaurus, Camara ]
-  - display: Dryosaurus
-    diet: herbivore
-    emoji: 🦕
-    keys: [ Dryosaurus, Dryo ]
-  - display: Parasaurolophus
-    diet: herbivore
-    emoji: 🦕
-    keys: [ Parasaurolophus, Para ]
-  - display: Iguanodon
-    diet: herbivore
-    emoji: 🦕
-    keys: [ Iguanodon ]
-  - display: Diablocephalus
-    diet: herbivore
-    emoji: 🦕
-    keys: [ Diablocephalus, Diablo ]
-  - display: Pachycephalosaurus
-    diet: herbivore
-    emoji: 🦕
-    keys: [ Pachycephalosaurus, Pachy ]
-  - display: Kentrosaurus
-    diet: herbivore
-    emoji: 🦕
-    keys: [ Kentrosaurus, Kentro ]
-  - display: Amargasaurus
-    diet: herbivore
-    emoji: 🦕
-    keys: [ Amargasaurus, Amarga ]
-  - display: Therizinosaurus
-    diet: herbivore
-    emoji: 🦥
-    keys: [ Therizinosaurus, Theri ]
+    keys: [ Tenontosaurus, Teno ]
   - display: Hypsilophodon
     diet: herbivore
     emoji: 🦎
     keys: [ Hypsilophodon, Hypsi ]
+  - display: Pachycephalosaurus
+    diet: herbivore
+    emoji: 🦕
+    keys: [ Pachycephalosaurus, Pachy ]
+  - display: Diabloceratops
+    diet: herbivore
+    emoji: 🦕
+    keys: [ Diabloceratops, Diablocephalus, Diablo ]
+  - display: Dryosaurus
+    diet: herbivore
+    emoji: 🦕
+    keys: [ Dryosaurus, Dryo ]
+  - display: Maiasaura
+    diet: herbivore
+    emoji: 🦕
+    keys: [ Maiasaura, Maia ]
+  - display: Triceratops
+    diet: herbivore
+    emoji: 🦏
+    keys: [ Triceratops, Trike ]
+  - display: Gallimimus
+    diet: omnivore
+    emoji: 🐦
+    keys: [ Gallimimus, Galli ]
+  - display: Beipiaosaurus
+    diet: omnivore
+    emoji: 🐦
+    keys: [ Beipiaosaurus, Beipiaognathus, Beipiao ]

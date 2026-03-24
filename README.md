@@ -6,38 +6,16 @@ Self-hosted **Discord** companion for **The Isle Evrima** dedicated servers: Ste
 
 ## Table of contents
 
-1. [Will Java work?](#will-java-work)
-2. [What you need](#what-you-need)
-3. [How it fits together](#how-it-fits-together)
-4. [Discord application setup](#discord-application-setup)
-5. [Evrima server (RCON)](#evrima-server-rcon)
-6. [Configuration](#configuration)
-7. [Build](#build)
-8. [Run](#run)
-9. [Slash commands reference](#slash-commands-reference)
-10. [Troubleshooting](#troubleshooting)
-11. [Security notes](#security-notes)
-
----
-
-## Will Java work?
-
-**Yes.** This bot uses:
-
-- **[JDA](https://github.com/discord-jda/JDA)** (Discord’s official gateway/API for bots)
-- **Java 17+** (LTS, same era as many server hosts)
-- A small **SQLite** file for persistence
-- An **Evrima binary RCON** TCP client (same framing as [TheIsle_RCON.py](https://github.com/modernham/The-Isle-Evrima-Server-Tools) / [evrima-rcon](https://github.com/theislemanager/evrima-rcon), not Source/mcrcon)
-
-Thousands of production Discord bots run on Java. You are not depending on Minecraft or Spigot here—only the JVM and Maven dependencies listed in `pom.xml`.
-
-**Requirements on the machine that runs the bot:**
-
-| Requirement | Notes |
-|-------------|--------|
-| **Java 17+** | `java -version` should show 17 or newer. |
-| **Network** | Outbound HTTPS to Discord; TCP to your Evrima host’s **RCON port** (often same machine → `127.0.0.1`). |
-| **Disk** | SQLite file grows slowly (links, audit, economy, parking rows). |
+1. [What you need](#what-you-need)
+2. [How it fits together](#how-it-fits-together)
+3. [Discord application setup](#discord-application-setup)
+4. [Evrima server (RCON)](#evrima-server-rcon)
+5. [Configuration](#configuration)
+6. [Build](#build)
+7. [Run](#run)
+8. [Slash commands reference](#slash-commands-reference)
+9. [Troubleshooting](#troubleshooting)
+10. [Security notes](#security-notes)
 
 ---
 
@@ -58,7 +36,7 @@ Thousands of production Discord bots run on Java. You are not depending on Minec
                                +-- TCP RCON ---> [ Evrima dedicated server ]
 ```
 
-- **Discord** delivers slash commands and DMs.
+- **Discord** delivers slash commands and DMs. (DMs currently don't work, this is an Isle issue not an EvrimaBot issue)
 - **RCON** sends text commands the game server understands (`announce`, `kick`, etc.).
 - **SQLite** stores links, points, audit rows, and optional “parking” metadata you define later.
 
@@ -137,9 +115,11 @@ Paths like `database.path` are relative to the **process working directory** unl
 
 **Adaptive AI density:** optional `adaptive_ai_density` runs RCON `aidensity` on a timer from **how full the server is** vs `max_players` (same **player estimate** as the ecosystem dashboard). Set `enabled: true` and `max_players` to your slot cap. **`tiers`** is a list of `{ min_percent, max_percent, density }` bands (inclusive, 0–100); gaps with no matching band are skipped (with a warning). Empty / omitted `tiers` uses defaults: 0–49 → `1.0`, 50–79 → `0.5`, 80–100 → `0.15`. The bot stores the last applied value in SQLite so it **does not** re-send RCON when the target density is unchanged. Manual `/evrima-admin ai-density` still works; the next scheduler tick may override it.
 
+**Species population control (dynamic dino locks):** optional `species_population_control` edits RCON `updateplayables` from live ecosystem counts so capped species can be temporarily removed/re-added without manual admin intervention. Rule is **lock at** `count >= cap`, **unlock at** `count <= cap - unlock_below_offset` (hysteresis to reduce flapping). Tick interval is `interval_seconds` (default 60). On `updateplayables` failure, the bot retries once after **1 second**. Optional `announce_changes` can send in-game notices (default false to avoid spam). Admins can toggle runtime state with `/evrima-admin species-control` and override caps without file access via `/evrima-admin species-cap-set` / `species-cap-clear` (persisted in SQLite `bot_kv` and loaded on restart).
+
 **Channel topic (server status line):** optional `server_status_topic` sets **Discord channel topic(s)** on a timer (e.g. `12/60 players online | 847 unique players seen | Last update: …`). Discord **heavily rate-limits** `PATCH /channels` (guild **shared** bucket); the bot only calls the API when **player count** or **`max_players`** (or bridge-uptime minute, if enabled) **change** — not when only “Last update” or **unique-seen** would change, so new Steam IDs in `playerlist` do not trigger a topic refresh by themselves (the **unique** line still updates the next time the fingerprint changes, e.g. population moves). With **two or more** channels, topic PATCHes run **one at a time**, then wait **`multi_channel_stagger_seconds`** (default **210**, clamped 120–900) before the next — Discord has hit **~183s** Retry-After on this route; raise stagger or use fewer channels if you still see 429s. Prefer **`interval_minutes` ≥ 5** for several `channel_ids`; keep **`show_bridge_uptime: false`** unless needed. Use **`channel_id`** and/or **`channel_ids`** (merged, deduplicated). **Manage Channels** is required. **Unique players** in the topic text come from SQLite (Steam IDs seen while the bot runs). Use `max_players` for the `/` cap, or `0` to omit it.
 
-**Scheduled corpse wipes:** set `scheduled_wipecorpses.interval_minutes` to a positive number to run RCON `wipecorpses` on that interval (same as `/evrima-admin wipecorpses`). Use `0` to disable. Optional `warn_before_minutes` (default 5) sends an in-game `announce` first; set `0` to skip. `announce_message` customizes the text. `interval_minutes` must be **greater than** `warn_before_minutes` for the warning to run. The schedule is counted from **when the JVM starts**; it is **not** saved to disk, so each bot **restart** resets the timer. With e.g. `interval_minutes: 120` and `warn_before_minutes: 5`, the **first** announce is about **115 minutes** after startup, then the wipe **5 minutes** later, then the pattern repeats. Failures are logged only (no Discord post).
+**Scheduled corpse wipes:** configure `scheduled_wipecorpses.enabled` + `interval_minutes` to run RCON `wipecorpses` automatically (same action as `/evrima-admin wipecorpses`). `enabled` supports `true`, `false`, and `dynamic`. In `dynamic`, wipes target ON when online percent is at least `dynamic_enable_percent` of `dynamic_max_players`, and OFF when below it; transitions are debounced by `dynamic_disable_grace_seconds` in both directions (anti-flap). Optional `warn_before_minutes` sends an in-game `announce` first; set `0` to skip. `announce_message` customizes the warning text. Runtime control is available via `/evrima-admin corpse-wipe-control` and `/evrima-admin corpse-wipe-set` / `corpse-wipe-clear` (persisted in SQLite `bot_kv`, survives restart).
 
 **In-game log → Discord (chat + kills/deaths):** Evrima RCON does **not** expose chat or kill feeds. Optional `ingame_chat_log` tails **`TheIsle.log`** and posts lines that match **any** substring in `line_contains` (YAML list or one string). Defaults include **`LogTheIsleChatData`** (chat) and **`LogTheIsleKillData`** (kills / many death messages such as PvP — same markers as [Theislemanager/Chatbot](https://github.com/Theislemanager/Chatbot)). By default **`mirror_local_chat: false`** drops **`[Spatial]`** / **`[Local]`** lines after parse so only global-style traffic is mirrored; set **`mirror_local_chat: true`** to include proximity chat. The bot **parses** known formats into short Discord lines, e.g. `[Global] **Player:** message` and `**Kill:** **Player** — …`. Other shapes get a best-effort strip of tags/SteamIDs. Starvation / odd kills: add substrings from your log if needed. **YAML on Windows:** use forward slashes or single-quoted paths (see `config.example.yml` under `ingame_chat_log`). `channel_id: 0` disables; offset in `bot_kv`; new paths start at EOF.
 
@@ -147,7 +127,7 @@ Paths like `database.path` are relative to the **process working directory** unl
 
 ## Build
 
-From `EvrimaServerBot/1.0.0`:
+From `EvrimaServerBot/1.0.1`:
 
 ```bash
 mvn -q package
@@ -156,7 +136,7 @@ mvn -q package
 Fat JAR output:
 
 ```text
-target/evrima-server-bot-1.0.0.jar
+target/evrima-server-bot-1.0.1.jar
 ```
 
 ---
@@ -167,19 +147,19 @@ target/evrima-server-bot-1.0.0.jar
 
 ```bash
 cd path\to\bot-folder
-java -jar target\evrima-server-bot-1.0.0.jar
+java -jar target\evrima-server-bot-1.0.1.jar
 ```
 
 **JDK 24+:** If you see warnings about `java.lang.System::load` / SQLite, either use **`start-bot.bat`** (it auto-adds `--enable-native-access=ALL-UNNAMED` when your `java` supports it) or run:
 
 ```bash
-java --enable-native-access=ALL-UNNAMED -jar evrima-server-bot-1.0.0.jar
+java --enable-native-access=ALL-UNNAMED -jar evrima-server-bot-1.0.1.jar
 ```
 
 With an explicit config path:
 
 ```bash
-java -jar evrima-server-bot-1.0.0.jar D:\configs\evrima-bot-config.yml
+java -jar evrima-server-bot-1.0.1.jar D:\configs\evrima-bot-config.yml
 ```
 
 On first start the bot will:
@@ -236,6 +216,13 @@ Commands are split into **four roots** so you can hide staff trees in **Server S
 | `ai-stop-spawns` | RCON **`aidensity 0`** only — slows/stops **new** AI spawns. Does **not** kill live AI, wipe corpses, or toggle AI. |
 | `ai-wipe` | **Informational only** — explains that **The Isle Evrima**’s documented **binary RCON** verbs (`wipecorpses`, `toggleai`, `aidensity`, …) **do not** include clearing **living** wild AI; use **Insert → Admin → Wipe AI** in-game. Does **not** send RCON `custom` / free-text execs. |
 | `ai-learning` | RCON `toggleailearning` if your build supports it. |
+| `species-control` | Runtime toggle for dynamic species caps: `mode=on|off|status` (persists in SQLite `bot_kv`, survives restart). |
+| `species-cap-set` | Runtime cap override for one species (`species` + `cap`, where `0` disables that species cap). |
+| `species-cap-clear` | Remove runtime cap override for one species and revert to `config.yml` value. |
+| `species-cap-list` | Show effective caps and mark which entries are runtime overrides. |
+| `corpse-wipe-control` | Runtime toggle/status for scheduled corpse wipes: `mode=on|off|dynamic|status` (persisted). |
+| `corpse-wipe-set` | Set runtime wipe value by `key` (`interval_minutes`, `warn_before_minutes`, `announce_message`, `dynamic_max_players`, `dynamic_enable_percent`, `dynamic_disable_grace_seconds`) and `value`. |
+| `corpse-wipe-clear` | Clear runtime wipe override by key (`enabled`, `interval_minutes`, `warn_before_minutes`, `announce_message`, `dynamic_max_players`, `dynamic_enable_percent`, `dynamic_disable_grace_seconds`, `all`). |
 
 #### AI commands (quick reference)
 

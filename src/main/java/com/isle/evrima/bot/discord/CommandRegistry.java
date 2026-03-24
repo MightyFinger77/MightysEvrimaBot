@@ -109,7 +109,24 @@ public final class CommandRegistry {
                                 .addOption(OptionType.STRING, "classes", "Internal names, comma-separated (e.g. boar,Compsognathus)", true),
                         new SubcommandData("ai-stop-spawns", "Stop **new** AI spawns only: RCON aidensity 0 (use wipecorpses / ai-toggle separately)"),
                         new SubcommandData("ai-wipe", "Info: Evrima RCON has no opcode for admin-panel Wipe AI (no custom exec)"),
-                        new SubcommandData("ai-learning", "Flip AI learning flag if your build supports it (RCON toggleailearning)")
+                        new SubcommandData("ai-learning", "Flip AI learning flag if your build supports it (RCON toggleailearning)"),
+                        new SubcommandData("species-control", "Toggle dynamic species cap control scheduler (on/off/status)")
+                                .addOption(OptionType.STRING, "mode", "on, off, or status", true),
+                        new SubcommandData("species-cap-set", "Set runtime species cap (0 = unlimited/unmanaged)")
+                                .addOption(OptionType.STRING, "species", "Species display name", true)
+                                .addOption(OptionType.INTEGER, "cap", "Cap value (0..500)", true),
+                        new SubcommandData("species-cap-clear", "Clear runtime override for one species (revert to config)")
+                                .addOption(OptionType.STRING, "species", "Species display name", true),
+                        new SubcommandData("species-cap-list", "Show effective species caps and runtime overrides"),
+                        new SubcommandData("corpse-wipe-control", "Toggle scheduled corpse wipes (on/off/dynamic/status)")
+                                .addOption(OptionType.STRING, "mode", "on, off, dynamic, or status", true),
+                        new SubcommandData("corpse-wipe-set", "Set scheduled wipe runtime value")
+                                .addOption(OptionType.STRING, "key",
+                                        "interval_minutes, warn_before_minutes, announce_message, dynamic_*", true)
+                                .addOption(OptionType.STRING, "value", "Value for the key", true),
+                        new SubcommandData("corpse-wipe-clear", "Clear scheduled wipe runtime override(s)")
+                                .addOption(OptionType.STRING, "key",
+                                        "enabled, interval_minutes, warn_before_minutes, announce_message, dynamic_*, or all", true)
                 );
     }
 

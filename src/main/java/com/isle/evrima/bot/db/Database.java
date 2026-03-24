@@ -14,7 +14,9 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.Set;
@@ -378,6 +380,29 @@ public final class Database implements AutoCloseable {
             ps.setString(2, value);
             ps.executeUpdate();
         }
+    }
+
+    public void deleteBotKv(String key) throws SQLException {
+        try (Connection c = open();
+             PreparedStatement ps = c.prepareStatement("DELETE FROM bot_kv WHERE k = ?")) {
+            ps.setString(1, key);
+            ps.executeUpdate();
+        }
+    }
+
+    /** Returns all key/value pairs where key starts with the given prefix. */
+    public Map<String, String> listBotKvByPrefix(String prefix) throws SQLException {
+        Map<String, String> out = new LinkedHashMap<>();
+        try (Connection c = open();
+             PreparedStatement ps = c.prepareStatement("SELECT k, v FROM bot_kv WHERE k LIKE ? ORDER BY k")) {
+            ps.setString(1, prefix + "%");
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    out.put(rs.getString(1), rs.getString(2));
+                }
+            }
+        }
+        return out;
     }
 
     /**
