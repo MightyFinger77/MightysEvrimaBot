@@ -43,6 +43,7 @@ public final class EvrimaServerBotApp {
 
     public static void main(String[] args) throws Exception {
         Path cfgPath = ConfigBootstrap.resolveConfigYamlPath(args);
+        ConfigMigration.migrateIfNeeded(cfgPath);
         ConfigBootstrap.ensureSpeciesTaxonomyBesideConfig(cfgPath);
         BotConfig config = BotConfig.load(cfgPath);
 

@@ -14,6 +14,8 @@
 # │                         ██████╔╝╚██████╔╝   ██║                             │
 # │                         ╚═════╝  ╚═════╝    ╚═╝                             │
 # │                                                                             │
+# │                            by MightyFinger77                                │
+# │                                                                             │
 # │      ✦ · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · ✦       │
 # │                                                                             │
 # │    ►  Discord Bridge · Ecosystem · Species Caps · Schedulers · RCON  ◄      │
@@ -22,6 +24,9 @@
 # ╰─────────────────────────────────────────────────────────────────────────────╯
 #
 # Copy to config.yml next to the JAR (or set working directory).
+#
+# config_version — bump in defaults when keys/layout change; bot merges new options into existing config.yml on startup.
+config_version: 1
 
 discord:
   # Prefer environment variable DISCORD_TOKEN for production.

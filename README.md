@@ -355,3 +355,4 @@ Independent project; not affiliated with The Isle. Extend and run on your own in
 - [ ] Make species population caps dynamic according to max_player percentage
 - [ ] Complete dino parking feature
 - [ ] Find a way to implement ai-wipe... (set density to 0 briefly maybe?)
+- [ ] Implement MySQL/MariaDB
