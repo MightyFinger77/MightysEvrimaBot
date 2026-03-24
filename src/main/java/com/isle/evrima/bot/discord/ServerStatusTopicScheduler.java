@@ -1,6 +1,7 @@
 package com.isle.evrima.bot.discord;
 
 import com.isle.evrima.bot.config.BotConfig;
+import com.isle.evrima.bot.config.LiveBotConfig;
 import com.isle.evrima.bot.db.Database;
 import com.isle.evrima.bot.ecosystem.PopulationDashboardService;
 import net.dv8tion.jda.api.JDA;
@@ -46,7 +47,7 @@ public final class ServerStatusTopicScheduler {
     private static final DateTimeFormatter LAST_UPDATE_FMT =
             DateTimeFormatter.ofPattern("EEE, d MMM uuuu HH:mm:ss z", Locale.ENGLISH);
 
-    private final BotConfig config;
+    private final LiveBotConfig live;
     private final Database database;
     private final PopulationDashboardService population;
     private final Set<Long> warnedPermissionChannelIds = ConcurrentHashMap.newKeySet();
@@ -56,13 +57,14 @@ public final class ServerStatusTopicScheduler {
     /** Prevents a new multi-channel rollout while a previous async chain is still PATCHing. */
     private final AtomicBoolean topicMultiRolloutBusy = new AtomicBoolean(false);
 
-    public ServerStatusTopicScheduler(BotConfig config, Database database, PopulationDashboardService population) {
-        this.config = Objects.requireNonNull(config, "config");
+    public ServerStatusTopicScheduler(LiveBotConfig live, Database database, PopulationDashboardService population) {
+        this.live = Objects.requireNonNull(live, "live");
         this.database = Objects.requireNonNull(database, "database");
         this.population = Objects.requireNonNull(population, "population");
     }
 
     public void start(JDA jda) {
+        BotConfig config = live.get();
         List<Long> chIds = config.serverStatusTopicChannelIds();
         if (chIds.isEmpty()) {
             return;
@@ -134,7 +136,7 @@ public final class ServerStatusTopicScheduler {
 
         int staggerSec = applicable.size() <= 1
                 ? STAGGER_SECONDS_SINGLE
-                : config.serverStatusTopicMultiChannelStaggerSeconds();
+                : live.get().serverStatusTopicMultiChannelStaggerSeconds();
         AtomicInteger remaining = new AtomicInteger(applicable.size());
         ScheduledExecutorService chainExec = topicChainScheduler;
         if (applicable.size() <= 1 || chainExec == null) {
@@ -231,6 +233,7 @@ public final class ServerStatusTopicScheduler {
      * show “unique players seen”; it refreshes when online count or other fingerprint fields change.
      */
     private String buildStatsFingerprint(PopulationDashboardService.SnapshotResult res) {
+        BotConfig config = live.get();
         int n = Math.max(0, res.data().referencePlayerTotal());
         int max = config.serverStatusTopicMaxPlayers();
         StringBuilder sb = new StringBuilder(32);
@@ -244,6 +247,7 @@ public final class ServerStatusTopicScheduler {
     }
 
     private String buildTopic(PopulationDashboardService.SnapshotResult res, long uniqueSeen) {
+        BotConfig config = live.get();
         int n = Math.max(0, res.data().referencePlayerTotal());
         int max = config.serverStatusTopicMaxPlayers();
         StringBuilder sb = new StringBuilder(128);
@@ -269,7 +273,7 @@ public final class ServerStatusTopicScheduler {
     }
 
     private ZoneId resolveZone() {
-        String id = config.serverStatusTopicTimezoneId();
+        String id = live.get().serverStatusTopicTimezoneId();
         if (id == null || id.isBlank()) {
             return ZoneId.systemDefault();
         }

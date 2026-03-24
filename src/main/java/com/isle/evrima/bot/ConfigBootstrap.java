@@ -23,7 +23,8 @@ public final class ConfigBootstrap {
     /** Alternate folder name if you keep YAMLs under {@code config/} instead of {@code configs/}. */
     private static final String CONFIG_DIR_SINGULAR = "config";
     private static final String DEFAULT_CONFIG_FILENAME = "config.yml";
-    private static final String BUNDLED_CONFIG_EXAMPLE = "config.example.yml";
+    /** Bundled default template (classpath {@code /config.yml}) copied to disk only when {@code config.yml} is missing. */
+    private static final String BUNDLED_CONFIG_TEMPLATE = "config.yml";
     private static final String TAXONOMY_FILENAME = "species-taxonomy.yml";
 
     private ConfigBootstrap() {}
@@ -55,7 +56,7 @@ public final class ConfigBootstrap {
 
         Files.createDirectories(dir);
         Path configFile = dir.resolve(DEFAULT_CONFIG_FILENAME);
-        extractResourceIfMissing(configFile, BUNDLED_CONFIG_EXAMPLE);
+        extractResourceIfMissing(configFile, BUNDLED_CONFIG_TEMPLATE);
         extractResourceIfMissing(dir.resolve(TAXONOMY_FILENAME), TAXONOMY_FILENAME);
         if (!Files.isRegularFile(configFile)) {
             throw new IOException("Failed to create default config at " + configFile.toAbsolutePath());
@@ -89,7 +90,7 @@ public final class ConfigBootstrap {
             in = ConfigBootstrap.class.getClassLoader().getResourceAsStream(resourceName);
         }
         if (in == null) {
-            throw new IOException("Missing bundled resource: " + resourceName + " (rebuild JAR with config.example.yml + species-taxonomy.yml on classpath)");
+            throw new IOException("Missing bundled resource: " + resourceName + " (rebuild JAR with src/main/resources config.yml + species-taxonomy.yml on classpath)");
         }
         try (InputStream stream = in) {
             Files.copy(stream, target, StandardCopyOption.REPLACE_EXISTING);

@@ -93,6 +93,19 @@ public final class Database implements AutoCloseable {
                       steam_id64 TEXT NOT NULL PRIMARY KEY,
                       first_seen_epoch_sec INTEGER NOT NULL
                     )""");
+            int removed = st.executeUpdate("""
+                    DELETE FROM bot_kv WHERE k = 'species_population_control_runtime_enabled'
+                    OR k LIKE 'species_population_control_cap_override:%'
+                    OR k = 'scheduled_wipecorpses_runtime_enabled'
+                    OR k = 'scheduled_wipecorpses_runtime_interval_minutes'
+                    OR k = 'scheduled_wipecorpses_runtime_warn_before_minutes'
+                    OR k = 'scheduled_wipecorpses_runtime_announce_message'
+                    OR k = 'scheduled_wipecorpses_runtime_dynamic_max_players'
+                    OR k = 'scheduled_wipecorpses_runtime_dynamic_enable_percent'
+                    OR k = 'scheduled_wipecorpses_runtime_dynamic_disable_grace_seconds'""");
+            if (removed > 0) {
+                LOG.info("Removed {} obsolete bot_kv row(s) (scheduler settings now live in config.yml only)", removed);
+            }
         }
         LOG.info("Database ready at {}", filePath);
     }

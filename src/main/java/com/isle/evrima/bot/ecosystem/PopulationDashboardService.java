@@ -1,6 +1,6 @@
 package com.isle.evrima.bot.ecosystem;
 
-import com.isle.evrima.bot.config.BotConfig;
+import com.isle.evrima.bot.config.LiveBotConfig;
 import com.isle.evrima.bot.rcon.RconService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -17,9 +17,9 @@ public final class PopulationDashboardService {
 
     private static final Logger LOG = LoggerFactory.getLogger(PopulationDashboardService.class);
 
+    private final LiveBotConfig live;
     private final RconService rcon;
     private final SpeciesTaxonomy taxonomy;
-    private final BotConfig config;
 
     private volatile Cached cache;
 
@@ -27,8 +27,8 @@ public final class PopulationDashboardService {
 
     public record SnapshotResult(PopulationSnapshot data, boolean fromCache, long cacheAgeSeconds) {}
 
-    public PopulationDashboardService(BotConfig config, RconService rcon, SpeciesTaxonomy taxonomy) {
-        this.config = Objects.requireNonNull(config, "config");
+    public PopulationDashboardService(LiveBotConfig live, RconService rcon, SpeciesTaxonomy taxonomy) {
+        this.live = Objects.requireNonNull(live, "live");
         this.rcon = Objects.requireNonNull(rcon, "rcon");
         this.taxonomy = Objects.requireNonNull(taxonomy, "taxonomy");
     }
@@ -57,7 +57,7 @@ public final class PopulationDashboardService {
      * @param forceRefresh bypass TTL and hit RCON
      */
     public SnapshotResult snapshot(boolean forceRefresh) throws IOException {
-        long ttlMs = Math.max(5_000L, config.ecosystemCacheTtlSeconds() * 1000L);
+        long ttlMs = Math.max(5_000L, live.get().ecosystemCacheTtlSeconds() * 1000L);
         long now = System.currentTimeMillis();
         Cached c = cache;
         if (!forceRefresh && c != null && now - c.fetchedAtEpochMs < ttlMs) {

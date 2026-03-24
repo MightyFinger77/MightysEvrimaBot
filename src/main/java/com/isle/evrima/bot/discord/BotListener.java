@@ -1,6 +1,9 @@
 package com.isle.evrima.bot.discord;
 
 import com.isle.evrima.bot.config.BotConfig;
+import com.isle.evrima.bot.config.ConfigYamlUpdater;
+import com.isle.evrima.bot.config.ConfigYamlUpdater.ScheduledWipeResetKey;
+import com.isle.evrima.bot.config.LiveBotConfig;
 import com.isle.evrima.bot.db.Database;
 import com.isle.evrima.bot.ecosystem.EcosystemEmbeds;
 import com.isle.evrima.bot.ecosystem.PlayerlistPopulationParser;
@@ -25,6 +28,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.nio.file.Path;
 import java.security.SecureRandom;
 import java.sql.SQLException;
 import java.time.Duration;
@@ -36,21 +40,17 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ThreadLocalRandom;
 
+/**
+ * Discord slash entrypoint. <b>Config persistence:</b> subcommands that alter settings defined in {@code config.yml}
+ * must use {@link #applyYamlMutation} with {@link com.isle.evrima.bot.config.ConfigYamlUpdater} — never {@code bot_kv}
+ * for those values. RCON-only admin actions and economy/link data are unaffected. When adding reload-sensitive
+ * components, extend {@link #applyYamlMutation} (after {@link LiveBotConfig#reloadFromDisk()}) as needed.
+ */
 public final class BotListener extends ListenerAdapter {
 
     private static final Logger LOG = LoggerFactory.getLogger(BotListener.class);
     private static final String ALPH = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-    private static final String KV_SPECIES_CONTROL_ENABLED = "species_population_control_runtime_enabled";
-    private static final String KV_SPECIES_CAP_OVERRIDE_PREFIX = "species_population_control_cap_override:";
-    private static final String KV_CORPSE_WIPE_ENABLED = "scheduled_wipecorpses_runtime_enabled";
-    private static final String KV_CORPSE_WIPE_INTERVAL = "scheduled_wipecorpses_runtime_interval_minutes";
-    private static final String KV_CORPSE_WIPE_WARN = "scheduled_wipecorpses_runtime_warn_before_minutes";
-    private static final String KV_CORPSE_WIPE_MESSAGE = "scheduled_wipecorpses_runtime_announce_message";
-    private static final String KV_CORPSE_WIPE_DYN_MAX = "scheduled_wipecorpses_runtime_dynamic_max_players";
-    private static final String KV_CORPSE_WIPE_DYN_PCT = "scheduled_wipecorpses_runtime_dynamic_enable_percent";
-    private static final String KV_CORPSE_WIPE_DYN_GRACE = "scheduled_wipecorpses_runtime_dynamic_disable_grace_seconds";
-
-    private final BotConfig config;
+    private final LiveBotConfig live;
     private final Database database;
     private final RconService rcon;
     private final PermissionService permissions;
@@ -60,7 +60,7 @@ public final class BotListener extends ListenerAdapter {
     private final SecureRandom secureRandom = new SecureRandom();
 
     public BotListener(
-            BotConfig config,
+            LiveBotConfig live,
             Database database,
             RconService rcon,
             PermissionService permissions,
@@ -68,7 +68,7 @@ public final class BotListener extends ListenerAdapter {
             SpeciesPopulationControlScheduler speciesControl,
             ScheduledCorpseWipeScheduler corpseWipe
     ) {
-        this.config = config;
+        this.live = live;
         this.database = database;
         this.rcon = rcon;
         this.permissions = permissions;
@@ -156,13 +156,13 @@ public final class BotListener extends ListenerAdapter {
             event.deferReply(true).queue(hook -> {
                 try {
                     String code = randomCode(6);
-                    long exp = java.time.Instant.now().getEpochSecond() + config.linkCodeTtlMinutes() * 60L;
+                    long exp = java.time.Instant.now().getEpochSecond() + live.get().linkCodeTtlMinutes() * 60L;
                     database.putLinkCode(code, uid, exp);
                     User user = event.getUser();
                     user.openPrivateChannel().queue(
                             pc -> pc.sendMessage(
                                     "Your Isle linking code: **" + code + "**\nIt expires in "
-                                            + config.linkCodeTtlMinutes()
+                                            + live.get().linkCodeTtlMinutes()
                                             + " minutes.\nRun `/evrima link complete` with this code and your SteamID64."
                             ).queue(
                                     s -> hookEditEphemeral(hook, "Check your DMs for a linking code."),
@@ -367,17 +367,15 @@ public final class BotListener extends ListenerAdapter {
                                         hookEditEphemeral(hook, "species_population_control has no configured caps. Set `species_population_control.caps` first.");
                                         break;
                                     }
-                                    speciesControl.setEnabled(true);
-                                    database.putBotKv(KV_SPECIES_CONTROL_ENABLED, "true");
+                                    applyYamlMutation(y -> ConfigYamlUpdater.setSpeciesPopulationControlEnabled(y, true));
                                     database.appendAudit(event.getUser().getId(), "species_control_toggle", "on");
-                                    hookEditEphemeral(hook, "Species population control: **ON**");
+                                    hookEditEphemeral(hook, "Species population control: **ON** (saved to `config.yml`)");
                                     break;
                                 }
                                 if ("off".equals(mode) || "disable".equals(mode)) {
-                                    speciesControl.setEnabled(false);
-                                    database.putBotKv(KV_SPECIES_CONTROL_ENABLED, "false");
+                                    applyYamlMutation(y -> ConfigYamlUpdater.setSpeciesPopulationControlEnabled(y, false));
                                     database.appendAudit(event.getUser().getId(), "species_control_toggle", "off");
-                                    hookEditEphemeral(hook, "Species population control: **OFF**");
+                                    hookEditEphemeral(hook, "Species population control: **OFF** (saved to `config.yml`)");
                                     break;
                                 }
                                 hookEditEphemeral(hook, "Invalid mode. Use `on`, `off`, or `status`.");
@@ -389,17 +387,15 @@ public final class BotListener extends ListenerAdapter {
                                     hookEditEphemeral(hook, "cap must be between 0 and 500.");
                                     break;
                                 }
-                                speciesControl.setCapOverride(species, cap);
-                                database.putBotKv(KV_SPECIES_CAP_OVERRIDE_PREFIX + species.toLowerCase(Locale.ROOT), String.valueOf(cap));
+                                applyYamlMutation(y -> ConfigYamlUpdater.setSpeciesCap(y, species, cap));
                                 database.appendAudit(event.getUser().getId(), "species_cap_set", species + "=" + cap);
-                                hookEditEphemeral(hook, "Set runtime species cap: **" + species + " = " + cap + "**");
+                                hookEditEphemeral(hook, "Updated `config.yml`: species cap **" + species + " = " + cap + "**");
                             }
                             case "species-cap-clear" -> {
                                 String species = requiredString(event, "species").trim();
-                                speciesControl.clearCapOverride(species);
-                                database.deleteBotKv(KV_SPECIES_CAP_OVERRIDE_PREFIX + species.toLowerCase(Locale.ROOT));
+                                applyYamlMutation(y -> ConfigYamlUpdater.clearSpeciesCapToExampleDefault(y, species));
                                 database.appendAudit(event.getUser().getId(), "species_cap_clear", species);
-                                hookEditEphemeral(hook, "Cleared runtime species cap override for **" + species + "**.");
+                                hookEditEphemeral(hook, "Reset **" + species + "** cap in `config.yml` to the value from bundled defaults (or **0** if not listed there).");
                             }
                             case "species-cap-list" -> hookEditEphemeral(hook, speciesCapListText());
                             case "corpse-wipe-control" -> {
@@ -409,24 +405,21 @@ public final class BotListener extends ListenerAdapter {
                                     break;
                                 }
                                 if ("on".equals(mode) || "enable".equals(mode) || "true".equals(mode)) {
-                                    corpseWipe.setEnabledMode("true");
-                                    database.putBotKv(KV_CORPSE_WIPE_ENABLED, "true");
+                                    applyYamlMutation(y -> ConfigYamlUpdater.setScheduledWipecorpsesEnabled(y, "true"));
                                     database.appendAudit(event.getUser().getId(), "corpse_wipe_toggle", "on");
-                                    hookEditEphemeral(hook, "Scheduled corpse wipes: **ON**");
+                                    hookEditEphemeral(hook, "Scheduled corpse wipes: **ON** (saved to `config.yml`)");
                                     break;
                                 }
                                 if ("off".equals(mode) || "disable".equals(mode) || "false".equals(mode)) {
-                                    corpseWipe.setEnabledMode("false");
-                                    database.putBotKv(KV_CORPSE_WIPE_ENABLED, "false");
+                                    applyYamlMutation(y -> ConfigYamlUpdater.setScheduledWipecorpsesEnabled(y, "false"));
                                     database.appendAudit(event.getUser().getId(), "corpse_wipe_toggle", "off");
-                                    hookEditEphemeral(hook, "Scheduled corpse wipes: **OFF**");
+                                    hookEditEphemeral(hook, "Scheduled corpse wipes: **OFF** (saved to `config.yml`)");
                                     break;
                                 }
                                 if ("dynamic".equals(mode)) {
-                                    corpseWipe.setEnabledMode("dynamic");
-                                    database.putBotKv(KV_CORPSE_WIPE_ENABLED, "dynamic");
+                                    applyYamlMutation(y -> ConfigYamlUpdater.setScheduledWipecorpsesEnabled(y, "dynamic"));
                                     database.appendAudit(event.getUser().getId(), "corpse_wipe_toggle", "dynamic");
-                                    hookEditEphemeral(hook, "Scheduled corpse wipes: **DYNAMIC**");
+                                    hookEditEphemeral(hook, "Scheduled corpse wipes: **DYNAMIC** (saved to `config.yml`)");
                                     break;
                                 }
                                 hookEditEphemeral(hook, "Invalid mode. Use `on`, `off`, `dynamic`, or `status`.");
@@ -437,44 +430,38 @@ public final class BotListener extends ListenerAdapter {
                                 switch (key) {
                                     case "interval", "interval_minutes" -> {
                                         int v = parseIntInRange(value, 0, 10_080, "interval_minutes");
-                                        corpseWipe.setIntervalMinutes(v);
-                                        database.putBotKv(KV_CORPSE_WIPE_INTERVAL, String.valueOf(v));
+                                        applyYamlMutation(y -> ConfigYamlUpdater.setScheduledWipecorpsesIntervalMinutes(y, v));
                                         database.appendAudit(event.getUser().getId(), "corpse_wipe_set", "interval_minutes=" + v);
-                                        hookEditEphemeral(hook, "Set scheduled_wipecorpses.interval_minutes = **" + v + "**");
+                                        hookEditEphemeral(hook, "Set `config.yml` scheduled_wipecorpses.interval_minutes = **" + v + "**");
                                     }
                                     case "warn", "warn_before", "warn_before_minutes" -> {
                                         int v = parseIntInRange(value, 0, 1_440, "warn_before_minutes");
-                                        corpseWipe.setWarnBeforeMinutes(v);
-                                        database.putBotKv(KV_CORPSE_WIPE_WARN, String.valueOf(v));
+                                        applyYamlMutation(y -> ConfigYamlUpdater.setScheduledWipecorpsesWarnBeforeMinutes(y, v));
                                         database.appendAudit(event.getUser().getId(), "corpse_wipe_set", "warn_before_minutes=" + v);
-                                        hookEditEphemeral(hook, "Set scheduled_wipecorpses.warn_before_minutes = **" + v + "**");
+                                        hookEditEphemeral(hook, "Set `config.yml` scheduled_wipecorpses.warn_before_minutes = **" + v + "**");
                                     }
                                     case "message", "announce", "announce_message" -> {
-                                        corpseWipe.setAnnounceMessage(value);
-                                        database.putBotKv(KV_CORPSE_WIPE_MESSAGE, value);
+                                        applyYamlMutation(y -> ConfigYamlUpdater.setScheduledWipecorpsesAnnounceMessage(y, value));
                                         database.appendAudit(event.getUser().getId(), "corpse_wipe_set", "announce_message");
-                                        hookEditEphemeral(hook, "Updated scheduled_wipecorpses.announce_message.");
+                                        hookEditEphemeral(hook, "Updated `config.yml` scheduled_wipecorpses.announce_message.");
                                     }
                                     case "dynamic_max_players" -> {
                                         int v = parseIntInRange(value, 0, 1000, "dynamic_max_players");
-                                        corpseWipe.setDynamicMaxPlayers(v);
-                                        database.putBotKv(KV_CORPSE_WIPE_DYN_MAX, String.valueOf(v));
+                                        applyYamlMutation(y -> ConfigYamlUpdater.setScheduledWipecorpsesDynamicMaxPlayers(y, v));
                                         database.appendAudit(event.getUser().getId(), "corpse_wipe_set", "dynamic_max_players=" + v);
-                                        hookEditEphemeral(hook, "Set scheduled_wipecorpses.dynamic_max_players = **" + v + "**");
+                                        hookEditEphemeral(hook, "Set `config.yml` scheduled_wipecorpses.dynamic_max_players = **" + v + "**");
                                     }
                                     case "dynamic_enable_percent" -> {
                                         int v = parseIntInRange(value, 0, 100, "dynamic_enable_percent");
-                                        corpseWipe.setDynamicEnablePercent(v);
-                                        database.putBotKv(KV_CORPSE_WIPE_DYN_PCT, String.valueOf(v));
+                                        applyYamlMutation(y -> ConfigYamlUpdater.setScheduledWipecorpsesDynamicEnablePercent(y, v));
                                         database.appendAudit(event.getUser().getId(), "corpse_wipe_set", "dynamic_enable_percent=" + v);
-                                        hookEditEphemeral(hook, "Set scheduled_wipecorpses.dynamic_enable_percent = **" + v + "%**");
+                                        hookEditEphemeral(hook, "Set `config.yml` scheduled_wipecorpses.dynamic_enable_percent = **" + v + "%**");
                                     }
                                     case "dynamic_disable_grace_seconds" -> {
                                         int v = parseIntInRange(value, 0, 600, "dynamic_disable_grace_seconds");
-                                        corpseWipe.setDynamicDisableGraceSeconds(v);
-                                        database.putBotKv(KV_CORPSE_WIPE_DYN_GRACE, String.valueOf(v));
+                                        applyYamlMutation(y -> ConfigYamlUpdater.setScheduledWipecorpsesDynamicDisableGraceSeconds(y, v));
                                         database.appendAudit(event.getUser().getId(), "corpse_wipe_set", "dynamic_disable_grace_seconds=" + v);
-                                        hookEditEphemeral(hook, "Set scheduled_wipecorpses.dynamic_disable_grace_seconds = **" + v + "s**");
+                                        hookEditEphemeral(hook, "Set `config.yml` scheduled_wipecorpses.dynamic_disable_grace_seconds = **" + v + "s**");
                                     }
                                     default -> hookEditEphemeral(hook, "Unknown key. Use `interval_minutes`, `warn_before_minutes`, `announce_message`, `dynamic_max_players`, `dynamic_enable_percent`, or `dynamic_disable_grace_seconds`.");
                                 }
@@ -483,56 +470,36 @@ public final class BotListener extends ListenerAdapter {
                                 String key = requiredString(event, "key").trim().toLowerCase(Locale.ROOT);
                                 switch (key) {
                                     case "interval", "interval_minutes" -> {
-                                        corpseWipe.setIntervalMinutes(config.scheduledWipecorpsesIntervalMinutes());
-                                        database.deleteBotKv(KV_CORPSE_WIPE_INTERVAL);
-                                        hookEditEphemeral(hook, "Cleared runtime override for interval_minutes (reverted to config).");
+                                        applyYamlMutation(y -> ConfigYamlUpdater.resetScheduledWipecorpsesField(y, ScheduledWipeResetKey.INTERVAL_MINUTES));
+                                        hookEditEphemeral(hook, "Reset `scheduled_wipecorpses.interval_minutes` in `config.yml` to the bundled default template.");
                                     }
                                     case "warn", "warn_before", "warn_before_minutes" -> {
-                                        corpseWipe.setWarnBeforeMinutes(config.scheduledWipecorpsesWarnBeforeMinutes());
-                                        database.deleteBotKv(KV_CORPSE_WIPE_WARN);
-                                        hookEditEphemeral(hook, "Cleared runtime override for warn_before_minutes (reverted to config).");
+                                        applyYamlMutation(y -> ConfigYamlUpdater.resetScheduledWipecorpsesField(y, ScheduledWipeResetKey.WARN_BEFORE_MINUTES));
+                                        hookEditEphemeral(hook, "Reset `warn_before_minutes` in `config.yml` to bundled default.");
                                     }
                                     case "message", "announce", "announce_message" -> {
-                                        corpseWipe.setAnnounceMessage(config.scheduledWipecorpsesAnnounceMessage());
-                                        database.deleteBotKv(KV_CORPSE_WIPE_MESSAGE);
-                                        hookEditEphemeral(hook, "Cleared runtime override for announce_message (reverted to config).");
+                                        applyYamlMutation(y -> ConfigYamlUpdater.resetScheduledWipecorpsesField(y, ScheduledWipeResetKey.ANNOUNCE_MESSAGE));
+                                        hookEditEphemeral(hook, "Reset `announce_message` in `config.yml` to bundled default.");
                                     }
                                     case "enabled" -> {
-                                        corpseWipe.setEnabledMode(config.scheduledWipecorpsesEnabledMode());
-                                        database.deleteBotKv(KV_CORPSE_WIPE_ENABLED);
-                                        hookEditEphemeral(hook, "Cleared runtime override for enabled (reverted to config).");
+                                        applyYamlMutation(y -> ConfigYamlUpdater.resetScheduledWipecorpsesField(y, ScheduledWipeResetKey.ENABLED));
+                                        hookEditEphemeral(hook, "Reset `enabled` in `config.yml` to bundled default.");
                                     }
                                     case "dynamic_max_players" -> {
-                                        corpseWipe.setDynamicMaxPlayers(config.scheduledWipecorpsesDynamicMaxPlayers());
-                                        database.deleteBotKv(KV_CORPSE_WIPE_DYN_MAX);
-                                        hookEditEphemeral(hook, "Cleared runtime override for dynamic_max_players (reverted to config).");
+                                        applyYamlMutation(y -> ConfigYamlUpdater.resetScheduledWipecorpsesField(y, ScheduledWipeResetKey.DYNAMIC_MAX_PLAYERS));
+                                        hookEditEphemeral(hook, "Reset `dynamic_max_players` in `config.yml` to bundled default.");
                                     }
                                     case "dynamic_enable_percent" -> {
-                                        corpseWipe.setDynamicEnablePercent(config.scheduledWipecorpsesDynamicEnablePercent());
-                                        database.deleteBotKv(KV_CORPSE_WIPE_DYN_PCT);
-                                        hookEditEphemeral(hook, "Cleared runtime override for dynamic_enable_percent (reverted to config).");
+                                        applyYamlMutation(y -> ConfigYamlUpdater.resetScheduledWipecorpsesField(y, ScheduledWipeResetKey.DYNAMIC_ENABLE_PERCENT));
+                                        hookEditEphemeral(hook, "Reset `dynamic_enable_percent` in `config.yml` to bundled default.");
                                     }
                                     case "dynamic_disable_grace_seconds" -> {
-                                        corpseWipe.setDynamicDisableGraceSeconds(config.scheduledWipecorpsesDynamicDisableGraceSeconds());
-                                        database.deleteBotKv(KV_CORPSE_WIPE_DYN_GRACE);
-                                        hookEditEphemeral(hook, "Cleared runtime override for dynamic_disable_grace_seconds (reverted to config).");
+                                        applyYamlMutation(y -> ConfigYamlUpdater.resetScheduledWipecorpsesField(y, ScheduledWipeResetKey.DYNAMIC_DISABLE_GRACE_SECONDS));
+                                        hookEditEphemeral(hook, "Reset `dynamic_disable_grace_seconds` in `config.yml` to bundled default.");
                                     }
                                     case "all" -> {
-                                        corpseWipe.setEnabledMode(config.scheduledWipecorpsesEnabledMode());
-                                        corpseWipe.setIntervalMinutes(config.scheduledWipecorpsesIntervalMinutes());
-                                        corpseWipe.setWarnBeforeMinutes(config.scheduledWipecorpsesWarnBeforeMinutes());
-                                        corpseWipe.setAnnounceMessage(config.scheduledWipecorpsesAnnounceMessage());
-                                        corpseWipe.setDynamicMaxPlayers(config.scheduledWipecorpsesDynamicMaxPlayers());
-                                        corpseWipe.setDynamicEnablePercent(config.scheduledWipecorpsesDynamicEnablePercent());
-                                        corpseWipe.setDynamicDisableGraceSeconds(config.scheduledWipecorpsesDynamicDisableGraceSeconds());
-                                        database.deleteBotKv(KV_CORPSE_WIPE_ENABLED);
-                                        database.deleteBotKv(KV_CORPSE_WIPE_INTERVAL);
-                                        database.deleteBotKv(KV_CORPSE_WIPE_WARN);
-                                        database.deleteBotKv(KV_CORPSE_WIPE_MESSAGE);
-                                        database.deleteBotKv(KV_CORPSE_WIPE_DYN_MAX);
-                                        database.deleteBotKv(KV_CORPSE_WIPE_DYN_PCT);
-                                        database.deleteBotKv(KV_CORPSE_WIPE_DYN_GRACE);
-                                        hookEditEphemeral(hook, "Cleared all scheduled_wipecorpses runtime overrides (reverted to config).");
+                                        applyYamlMutation(ConfigYamlUpdater::resetScheduledWipecorpsesAll);
+                                        hookEditEphemeral(hook, "Reset entire `scheduled_wipecorpses` section in `config.yml` to bundled defaults.");
                                     }
                                     default -> hookEditEphemeral(hook, "Unknown key. Use `enabled`, `interval_minutes`, `warn_before_minutes`, `announce_message`, `dynamic_max_players`, `dynamic_enable_percent`, `dynamic_disable_grace_seconds`, or `all`.");
                                 }
@@ -544,9 +511,9 @@ public final class BotListener extends ListenerAdapter {
                         LOG.error("admin command db", e);
                         hookEditEphemeral(hook, "Database error — check logs.");
                     } catch (IOException e) {
-                        LOG.warn("admin RCON: {}", e.toString());
-                        hookEditEphemeral(hook, "RCON failed: " + truncate(e.getMessage(), 1800));
-                    } catch (IllegalStateException e) {
+                        LOG.warn("admin IO: {}", e.toString());
+                        hookEditEphemeral(hook, "Operation failed: " + truncate(e.getMessage(), 1800));
+                    } catch (IllegalStateException | IllegalArgumentException e) {
                         hookEditEphemeral(hook, truncate(e.getMessage(), 2000));
                     }
                 },
@@ -629,7 +596,7 @@ public final class BotListener extends ListenerAdapter {
                 PopulationDashboardService.SnapshotResult res = population.snapshot(fresh);
                 SpeciesTaxonomy tax = population.taxonomy();
                 MessageEmbed embed = EcosystemEmbeds.build(
-                        config.ecosystemTitle(),
+                        live.get().ecosystemTitle(),
                         res.data(),
                         tax,
                         event.getGuild());
@@ -657,8 +624,8 @@ public final class BotListener extends ListenerAdapter {
                 event.reply("You already used your daily spin today (UTC).").setEphemeral(true).queue();
                 return;
             }
-            int lo = Math.min(config.dailySpinMin(), config.dailySpinMax());
-            int hi = Math.max(config.dailySpinMin(), config.dailySpinMax());
+            int lo = Math.min(live.get().dailySpinMin(), live.get().dailySpinMax());
+            int hi = Math.max(live.get().dailySpinMin(), live.get().dailySpinMax());
             int roll = ThreadLocalRandom.current().nextInt(lo, hi + 1);
             database.setLastSpinDay(uid, today);
             database.addBalance(uid, roll);
@@ -697,6 +664,24 @@ public final class BotListener extends ListenerAdapter {
         }, f -> LOG.error("deferReply (evrima-admin give) failed", f));
     }
 
+    @FunctionalInterface
+    private interface YamlMutation {
+        void accept(Path configYaml) throws IOException;
+    }
+
+    /**
+     * Writes {@code config.yml} then reloads {@link LiveBotConfig}. Use for every admin subcommand that changes
+     * YAML-backed bot settings (add {@link com.isle.evrima.bot.config.ConfigYamlUpdater} methods for new keys).
+     */
+    private void applyYamlMutation(YamlMutation mutation) throws IOException {
+        synchronized (live) {
+            mutation.accept(live.yamlPath());
+            live.reloadFromDisk();
+            speciesControl.invalidateConfigCache();
+            corpseWipe.onConfigReloaded();
+        }
+    }
+
     private void hookEditEphemeral(InteractionHook hook, String text) {
         String t = truncate(text, 2000);
         if (t.isBlank()) {
@@ -708,7 +693,6 @@ public final class BotListener extends ListenerAdapter {
     private String speciesControlStatusText() {
         String state = speciesControl.isEnabled() ? "ON" : "OFF";
         Map<String, Integer> effective = speciesControl.effectiveCapsReadOnly();
-        Map<String, Integer> overrides = speciesControl.listCapOverrides();
         StringBuilder sb = new StringBuilder();
         int active = 0;
         for (Integer v : effective.values()) {
@@ -718,10 +702,10 @@ public final class BotListener extends ListenerAdapter {
         }
         sb.append("Species population control: **").append(state).append("**\n")
                 .append("Active caps: **").append(active).append("** species\n")
-                .append("Interval: **").append(config.speciesPopulationControlIntervalSeconds()).append("s**\n")
-                .append("Unlock offset: **").append(config.speciesPopulationControlUnlockBelowOffset()).append("**\n")
-                .append("Announce changes: **").append(config.speciesPopulationControlAnnounceChanges()).append("**\n");
-        sb.append("\n**Capped species:**\n");
+                .append("Interval: **").append(live.get().speciesPopulationControlIntervalSeconds()).append("s**\n")
+                .append("Unlock offset: **").append(live.get().speciesPopulationControlUnlockBelowOffset()).append("**\n")
+                .append("Announce changes: **").append(live.get().speciesPopulationControlAnnounceChanges()).append("**\n");
+        sb.append("\n**Capped species (from `config.yml`):**\n");
         boolean any = false;
         for (Map.Entry<String, Integer> e : effective.entrySet()) {
             int cap = e.getValue() == null ? 0 : e.getValue();
@@ -729,8 +713,7 @@ public final class BotListener extends ListenerAdapter {
                 continue;
             }
             any = true;
-            String mark = overrides.containsKey(e.getKey()) ? " _(override)_" : "";
-            sb.append("- ").append(e.getKey()).append(": **").append(cap).append("**").append(mark).append("\n");
+            sb.append("- ").append(e.getKey()).append(": **").append(cap).append("**\n");
         }
         if (!any) {
             sb.append("- None (all caps are 0/unmanaged)\n");
@@ -740,15 +723,10 @@ public final class BotListener extends ListenerAdapter {
 
     private String speciesCapListText() {
         Map<String, Integer> effective = speciesControl.effectiveCapsReadOnly();
-        Map<String, Integer> overrides = speciesControl.listCapOverrides();
         StringBuilder sb = new StringBuilder();
-        sb.append("**Species caps (effective):**\n");
+        sb.append("**Species caps (`config.yml`):**\n");
         for (Map.Entry<String, Integer> e : effective.entrySet()) {
-            String mark = overrides.containsKey(e.getKey()) ? " _(override)_" : "";
-            sb.append("- ").append(e.getKey()).append(": **").append(e.getValue()).append("**").append(mark).append("\n");
-        }
-        if (overrides.isEmpty()) {
-            sb.append("\nNo runtime overrides.");
+            sb.append("- ").append(e.getKey()).append(": **").append(e.getValue()).append("**\n");
         }
         return truncate(sb.toString().strip(), 2000);
     }

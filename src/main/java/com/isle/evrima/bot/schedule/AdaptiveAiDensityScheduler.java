@@ -2,6 +2,7 @@ package com.isle.evrima.bot.schedule;
 
 import com.isle.evrima.bot.config.AdaptiveAiDensityTier;
 import com.isle.evrima.bot.config.BotConfig;
+import com.isle.evrima.bot.config.LiveBotConfig;
 import com.isle.evrima.bot.db.Database;
 import com.isle.evrima.bot.ecosystem.PopulationDashboardService;
 import com.isle.evrima.bot.rcon.EvrimaRcon;
@@ -29,24 +30,25 @@ public final class AdaptiveAiDensityScheduler {
     private static final String KV_LAST_DENSITY = "adaptive_ai_density_last_applied";
     private static final double EPS = 1e-5;
 
-    private final BotConfig config;
+    private final LiveBotConfig live;
     private final RconService rcon;
     private final PopulationDashboardService population;
     private final Database database;
     private final AtomicBoolean warnedNoTier = new AtomicBoolean(false);
 
     public AdaptiveAiDensityScheduler(
-            BotConfig config,
+            LiveBotConfig live,
             RconService rcon,
             PopulationDashboardService population,
             Database database) {
-        this.config = Objects.requireNonNull(config, "config");
+        this.live = Objects.requireNonNull(live, "live");
         this.rcon = Objects.requireNonNull(rcon, "rcon");
         this.population = Objects.requireNonNull(population, "population");
         this.database = Objects.requireNonNull(database, "database");
     }
 
     public void start() {
+        BotConfig config = live.get();
         if (!config.adaptiveAiDensityEnabled()) {
             return;
         }
@@ -77,6 +79,7 @@ public final class AdaptiveAiDensityScheduler {
     }
 
     private void runOnce() throws SQLException, IOException {
+        BotConfig config = live.get();
         int maxPlayers = config.adaptiveAiDensityMaxPlayers();
         if (maxPlayers <= 0) {
             return;

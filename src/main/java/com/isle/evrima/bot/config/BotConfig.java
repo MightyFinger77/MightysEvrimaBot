@@ -24,6 +24,8 @@ public final class BotConfig {
     private final String rconPassword;
     private final int rconTimeoutMs;
     private final Path databasePath;
+    /** Absolute path to the loaded {@code config.yml} (for admin persistence writes). */
+    private final Path configYamlPath;
     private final int linkCodeTtlMinutes;
     private final int dailySpinMin;
     private final int dailySpinMax;
@@ -133,7 +135,8 @@ public final class BotConfig {
             String ingameChatLogPathRaw,
             int ingameChatLogPollSeconds,
             boolean ingameChatLogMirrorLocalChat,
-            List<String> ingameChatLogLineContainsAny
+            List<String> ingameChatLogLineContainsAny,
+            Path configYamlPath
     ) {
         this.discordToken = discordToken;
         this.guildId = guildId;
@@ -145,6 +148,7 @@ public final class BotConfig {
         this.rconPassword = rconPassword;
         this.rconTimeoutMs = rconTimeoutMs;
         this.databasePath = databasePath;
+        this.configYamlPath = Objects.requireNonNull(configYamlPath, "configYamlPath");
         this.linkCodeTtlMinutes = linkCodeTtlMinutes;
         this.dailySpinMin = dailySpinMin;
         this.dailySpinMax = dailySpinMax;
@@ -244,7 +248,7 @@ public final class BotConfig {
 
         Map<String, Object> popDash = mapOrEmpty(root.get("population_dashboard"));
         long popChannel = parseLong(popDash.get("channel_id"), 0L);
-        int popInterval = (int) parseLong(popDash.get("interval_minutes"), 5L);
+        int popInterval = (int) parseLong(popDash.get("interval_minutes"), 3L);
         if (popInterval < 1) {
             popInterval = 1;
         }
@@ -272,11 +276,11 @@ public final class BotConfig {
 
         Map<String, Object> adaptiveAi = mapOrEmpty(root.get("adaptive_ai_density"));
         boolean aaEnabled = parseBooleanYaml(adaptiveAi.get("enabled"), false);
-        int aaInterval = (int) parseLong(adaptiveAi.get("interval_minutes"), 4L);
+        int aaInterval = (int) parseLong(adaptiveAi.get("interval_minutes"), 3L);
         if (aaInterval < 1) {
             aaInterval = 1;
         }
-        int aaMaxPlayers = (int) parseLong(adaptiveAi.get("max_players"), 0L);
+        int aaMaxPlayers = (int) parseLong(adaptiveAi.get("max_players"), 140L);
         if (aaMaxPlayers < 0) {
             aaMaxPlayers = 0;
         }
@@ -308,23 +312,23 @@ public final class BotConfig {
         }
 
         Map<String, Object> schedWipe = mapOrEmpty(root.get("scheduled_wipecorpses"));
-        int wipeMin = (int) parseLong(schedWipe.get("interval_minutes"), 0L);
+        int wipeMin = (int) parseLong(schedWipe.get("interval_minutes"), 180L);
         if (wipeMin < 0) {
             wipeMin = 0;
         }
-        String wipeEnabledMode = parseModeOnOffDynamic(schedWipe.get("enabled"), wipeMin > 0 ? "true" : "false");
-        int wipeDynMaxPlayers = (int) parseLong(schedWipe.get("dynamic_max_players"), 0L);
+        String wipeEnabledMode = parseModeOnOffDynamic(schedWipe.get("enabled"), "dynamic");
+        int wipeDynMaxPlayers = (int) parseLong(schedWipe.get("dynamic_max_players"), 145L);
         if (wipeDynMaxPlayers < 0) {
             wipeDynMaxPlayers = 0;
         }
-        int wipeDynPct = (int) parseLong(schedWipe.get("dynamic_enable_percent"), 75L);
+        int wipeDynPct = (int) parseLong(schedWipe.get("dynamic_enable_percent"), 70L);
         if (wipeDynPct < 0) {
             wipeDynPct = 0;
         }
         if (wipeDynPct > 100) {
             wipeDynPct = 100;
         }
-        int wipeDynGraceSec = (int) parseLong(schedWipe.get("dynamic_disable_grace_seconds"), 20L);
+        int wipeDynGraceSec = (int) parseLong(schedWipe.get("dynamic_disable_grace_seconds"), 120L);
         if (wipeDynGraceSec < 0) {
             wipeDynGraceSec = 0;
         }
@@ -398,7 +402,8 @@ public final class BotConfig {
                 chatPath,
                 chatPoll,
                 chatMirrorLocal,
-                chatMarkers
+                chatMarkers,
+                yamlFile.toAbsolutePath().normalize()
         );
     }
 
@@ -643,6 +648,10 @@ public final class BotConfig {
 
     public Path databasePath() {
         return databasePath;
+    }
+
+    public Path configYamlPath() {
+        return configYamlPath;
     }
 
     public int linkCodeTtlMinutes() {

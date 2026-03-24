@@ -1,6 +1,6 @@
 package com.isle.evrima.bot.discord;
 
-import com.isle.evrima.bot.config.BotConfig;
+import com.isle.evrima.bot.config.LiveBotConfig;
 import com.isle.evrima.bot.db.Database;
 import net.dv8tion.jda.api.JDA;
 import net.dv8tion.jda.api.entities.Message;
@@ -83,26 +83,26 @@ public final class IngameChatLogScheduler {
     private static final Pattern KILL_PVP_NO_PREFIX = Pattern.compile(
             "(?is)^([^,]+),\\s*([^,]+),\\s*\\S+\\s*-\\s*Killed the following player:\\s*([^,]+),\\s*\\[7656119\\d{10}\\],\\s*Dino:\\s*([^,]+),\\s*Gender:\\s*([^,]+).*");
 
-    private final BotConfig config;
+    private final LiveBotConfig live;
     private final Database database;
     private final StringBuilder incompleteLine = new StringBuilder();
 
-    public IngameChatLogScheduler(BotConfig config, Database database) {
-        this.config = Objects.requireNonNull(config, "config");
+    public IngameChatLogScheduler(LiveBotConfig live, Database database) {
+        this.live = Objects.requireNonNull(live, "live");
         this.database = Objects.requireNonNull(database, "database");
     }
 
     public void start(JDA jda) {
-        long chId = config.ingameChatLogChannelId();
+        long chId = live.get().ingameChatLogChannelId();
         if (chId == 0L) {
             return;
         }
-        Path path = config.ingameChatLogPath();
+        Path path = live.get().ingameChatLogPath();
         if (path == null) {
             LOG.warn("ingame_chat_log.channel_id set but path is blank — chat mirror disabled");
             return;
         }
-        int sec = Math.max(1, Math.min(60, config.ingameChatLogPollSeconds()));
+        int sec = Math.max(1, Math.min(60, live.get().ingameChatLogPollSeconds()));
         ScheduledExecutorService ex = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "evrima-ingame-chat-log");
             t.setDaemon(true);
@@ -110,7 +110,7 @@ public final class IngameChatLogScheduler {
         });
         ex.scheduleAtFixedRate(() -> runSafe(jda, chId, path), 5, sec, TimeUnit.SECONDS);
         LOG.info("In-game log mirror: {} → Discord channel {} (every {}s, any of {})",
-                path.toAbsolutePath(), chId, sec, config.ingameChatLogLineContainsAny());
+                path.toAbsolutePath(), chId, sec, live.get().ingameChatLogLineContainsAny());
     }
 
     private void runSafe(JDA jda, long channelId, Path logPath) {
@@ -159,13 +159,13 @@ public final class IngameChatLogScheduler {
         String chunk = new String(buf, StandardCharsets.UTF_8);
         incompleteLine.append(chunk);
 
-        List<String> toSend = extractMatchingLines(config.ingameChatLogLineContainsAny());
+        List<String> toSend = extractMatchingLines(live.get().ingameChatLogLineContainsAny());
 
         database.putBotKv(KV_PATH, absStr);
         database.putBotKv(KV_OFFSET, String.valueOf(offset));
 
         for (String line : toSend) {
-            String formatted = formatForDiscord(line.strip(), config.ingameChatLogMirrorLocalChat());
+            String formatted = formatForDiscord(line.strip(), live.get().ingameChatLogMirrorLocalChat());
             if (formatted.isBlank()) {
                 continue;
             }

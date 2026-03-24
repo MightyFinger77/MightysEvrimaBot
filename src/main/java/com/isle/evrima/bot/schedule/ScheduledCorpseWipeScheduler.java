@@ -1,6 +1,7 @@
 package com.isle.evrima.bot.schedule;
 
 import com.isle.evrima.bot.config.BotConfig;
+import com.isle.evrima.bot.config.LiveBotConfig;
 import com.isle.evrima.bot.ecosystem.PopulationDashboardService;
 import com.isle.evrima.bot.rcon.RconService;
 import org.slf4j.Logger;
@@ -12,29 +13,20 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Optional periodic RCON {@code wipecorpses} when {@code scheduled_wipecorpses.interval_minutes} &gt; 0.
- * Can send an in-game {@code announce} a configurable number of minutes before each wipe.
+ * Settings are read from {@code config.yml} via {@link LiveBotConfig} (reloaded after admin slash commands).
  */
 public final class ScheduledCorpseWipeScheduler {
 
     private static final Logger LOG = LoggerFactory.getLogger(ScheduledCorpseWipeScheduler.class);
     private static final int ANNOUNCE_MAX_LEN = 400;
 
-    private final BotConfig config;
+    private final LiveBotConfig live;
     private final RconService rcon;
     private final PopulationDashboardService population;
-    private final AtomicReference<String> runtimeEnabledMode;
-    private final AtomicInteger runtimeDynamicMaxPlayers;
-    private final AtomicInteger runtimeDynamicEnablePercent;
-    private final AtomicInteger runtimeDynamicDisableGraceSeconds;
-    private final AtomicInteger runtimeIntervalMin;
-    private final AtomicInteger runtimeWarnMin;
-    private final AtomicReference<String> runtimeAnnounceMessage;
     private final AtomicBoolean announcedThisCycle = new AtomicBoolean(false);
     /** In {@code dynamic} mode: after pre-wipe {@code announce} succeeds, finish this wipe even if population drops below threshold. */
     private final AtomicBoolean pendingWipeCommittedDynamic = new AtomicBoolean(false);
@@ -43,17 +35,14 @@ public final class ScheduledCorpseWipeScheduler {
     private final AtomicLong dynamicAboveSinceEpochSec = new AtomicLong(0L);
     private final AtomicLong dynamicBelowSinceEpochSec = new AtomicLong(0L);
 
-    public ScheduledCorpseWipeScheduler(BotConfig config, RconService rcon, PopulationDashboardService population) {
-        this.config = Objects.requireNonNull(config, "config");
+    public ScheduledCorpseWipeScheduler(LiveBotConfig live, RconService rcon, PopulationDashboardService population) {
+        this.live = Objects.requireNonNull(live, "live");
         this.rcon = Objects.requireNonNull(rcon, "rcon");
         this.population = Objects.requireNonNull(population, "population");
-        this.runtimeEnabledMode = new AtomicReference<>(config.scheduledWipecorpsesEnabledMode());
-        this.runtimeDynamicMaxPlayers = new AtomicInteger(Math.max(0, config.scheduledWipecorpsesDynamicMaxPlayers()));
-        this.runtimeDynamicEnablePercent = new AtomicInteger(Math.max(0, Math.min(100, config.scheduledWipecorpsesDynamicEnablePercent())));
-        this.runtimeDynamicDisableGraceSeconds = new AtomicInteger(Math.max(0, Math.min(600, config.scheduledWipecorpsesDynamicDisableGraceSeconds())));
-        this.runtimeIntervalMin = new AtomicInteger(Math.max(0, config.scheduledWipecorpsesIntervalMinutes()));
-        this.runtimeWarnMin = new AtomicInteger(Math.max(0, config.scheduledWipecorpsesWarnBeforeMinutes()));
-        this.runtimeAnnounceMessage = new AtomicReference<>(config.scheduledWipecorpsesAnnounceMessage());
+    }
+
+    private BotConfig cfg() {
+        return live.get();
     }
 
     public void start() {
@@ -64,41 +53,50 @@ public final class ScheduledCorpseWipeScheduler {
             return t;
         });
         ex.scheduleWithFixedDelay(this::runTick, 5, 5, TimeUnit.SECONDS);
+        BotConfig c = cfg();
         LOG.info("Scheduled wipecorpses controller ready: mode={}, interval={}m, warn={}m, dynamic_max_players={}, dynamic_enable_percent={}%, dynamic_disable_grace_seconds={} (applies both directions)",
-                runtimeEnabledMode.get(), runtimeIntervalMin.get(), runtimeWarnMin.get(),
-                runtimeDynamicMaxPlayers.get(), runtimeDynamicEnablePercent.get(), runtimeDynamicDisableGraceSeconds.get());
+                c.scheduledWipecorpsesEnabledMode(), c.scheduledWipecorpsesIntervalMinutes(), c.scheduledWipecorpsesWarnBeforeMinutes(),
+                c.scheduledWipecorpsesDynamicMaxPlayers(), c.scheduledWipecorpsesDynamicEnablePercent(), c.scheduledWipecorpsesDynamicDisableGraceSeconds());
+    }
+
+    /** After {@code config.yml} is rewritten and {@link LiveBotConfig#reloadFromDisk()} completes. */
+    public void onConfigReloaded() {
+        dynamicAboveSinceEpochSec.set(0L);
+        dynamicBelowSinceEpochSec.set(0L);
+        resetCycleFromNow();
     }
 
     public String enabledMode() {
-        return runtimeEnabledMode.get();
+        return cfg().scheduledWipecorpsesEnabledMode();
     }
 
     public int dynamicMaxPlayers() {
-        return runtimeDynamicMaxPlayers.get();
+        return cfg().scheduledWipecorpsesDynamicMaxPlayers();
     }
 
     public int dynamicEnablePercent() {
-        return runtimeDynamicEnablePercent.get();
+        return cfg().scheduledWipecorpsesDynamicEnablePercent();
     }
 
     public int dynamicDisableGraceSeconds() {
-        return runtimeDynamicDisableGraceSeconds.get();
+        return cfg().scheduledWipecorpsesDynamicDisableGraceSeconds();
     }
 
     public boolean isEffectivelyEnabled() {
-        String mode = runtimeEnabledMode.get();
+        BotConfig c = cfg();
+        String mode = c.scheduledWipecorpsesEnabledMode();
         if ("true".equals(mode)) {
             return true;
         }
         if (!"dynamic".equals(mode)) {
             return false;
         }
-        int max = runtimeDynamicMaxPlayers.get();
+        int max = c.scheduledWipecorpsesDynamicMaxPlayers();
         if (max <= 0) {
             return false;
         }
-        int pct = runtimeDynamicEnablePercent.get();
-        int graceSec = runtimeDynamicDisableGraceSeconds.get();
+        int pct = c.scheduledWipecorpsesDynamicEnablePercent();
+        int graceSec = c.scheduledWipecorpsesDynamicDisableGraceSeconds();
         long now = nowEpochSec();
         try {
             int players = Math.max(0, population.snapshot(false).data().referencePlayerTotal());
@@ -140,71 +138,21 @@ public final class ScheduledCorpseWipeScheduler {
         }
     }
 
-    public void setEnabledMode(String mode) {
-        if (mode == null) {
-            mode = "false";
-        }
-        String m = mode.trim().toLowerCase();
-        if (!"true".equals(m) && !"false".equals(m) && !"dynamic".equals(m)) {
-            throw new IllegalArgumentException("enabled mode must be true, false, or dynamic");
-        }
-        runtimeEnabledMode.set(m);
-        dynamicAboveSinceEpochSec.set(0L);
-        dynamicBelowSinceEpochSec.set(0L);
-        resetCycleFromNow();
-    }
-
     public int intervalMinutes() {
-        return runtimeIntervalMin.get();
+        return cfg().scheduledWipecorpsesIntervalMinutes();
     }
 
     public int warnBeforeMinutes() {
-        return runtimeWarnMin.get();
+        return cfg().scheduledWipecorpsesWarnBeforeMinutes();
     }
 
     public String announceMessage() {
-        return runtimeAnnounceMessage.get();
-    }
-
-    public void setIntervalMinutes(int minutes) {
-        runtimeIntervalMin.set(Math.max(0, Math.min(10_080, minutes)));
-        resetCycleFromNow();
-    }
-
-    public void setWarnBeforeMinutes(int minutes) {
-        runtimeWarnMin.set(Math.max(0, Math.min(1_440, minutes)));
-        resetCycleFromNow();
-    }
-
-    public void setDynamicMaxPlayers(int maxPlayers) {
-        runtimeDynamicMaxPlayers.set(Math.max(0, Math.min(1000, maxPlayers)));
-        dynamicAboveSinceEpochSec.set(0L);
-        dynamicBelowSinceEpochSec.set(0L);
-        resetCycleFromNow();
-    }
-
-    public void setDynamicEnablePercent(int percent) {
-        runtimeDynamicEnablePercent.set(Math.max(0, Math.min(100, percent)));
-        dynamicAboveSinceEpochSec.set(0L);
-        dynamicBelowSinceEpochSec.set(0L);
-        resetCycleFromNow();
-    }
-
-    public void setDynamicDisableGraceSeconds(int seconds) {
-        runtimeDynamicDisableGraceSeconds.set(Math.max(0, Math.min(600, seconds)));
-        dynamicAboveSinceEpochSec.set(0L);
-        dynamicBelowSinceEpochSec.set(0L);
-        resetCycleFromNow();
-    }
-
-    public void setAnnounceMessage(String msg) {
-        runtimeAnnounceMessage.set(msg == null ? "" : msg);
-        // no cycle reset needed for text change only
+        return cfg().scheduledWipecorpsesAnnounceMessage();
     }
 
     private void resetCycleFromNow() {
         long now = nowEpochSec();
-        long intervalSec = Math.max(0L, runtimeIntervalMin.get()) * 60L;
+        long intervalSec = Math.max(0L, cfg().scheduledWipecorpsesIntervalMinutes()) * 60L;
         nextWipeEpochSec.set(intervalSec <= 0 ? 0L : now + intervalSec);
         announcedThisCycle.set(false);
         pendingWipeCommittedDynamic.set(false);
@@ -220,11 +168,12 @@ public final class ScheduledCorpseWipeScheduler {
         if (!effectiveEnabled && !wipeCommitted) {
             return;
         }
-        int periodMin = runtimeIntervalMin.get();
+        BotConfig c = cfg();
+        int periodMin = c.scheduledWipecorpsesIntervalMinutes();
         if (periodMin <= 0) {
             return;
         }
-        int warnMin = runtimeWarnMin.get();
+        int warnMin = c.scheduledWipecorpsesWarnBeforeMinutes();
         boolean useWarning = warnMin > 0 && periodMin > warnMin;
         long now = nowEpochSec();
         long wipeAt = nextWipeEpochSec.get();
@@ -237,10 +186,10 @@ public final class ScheduledCorpseWipeScheduler {
             if (useWarning && !announcedThisCycle.get()) {
                 long announceAt = wipeAt - warnMin * 60L;
                 if (now >= announceAt) {
-                    String msg = sanitizeAnnounce(runtimeAnnounceMessage.get());
+                    String msg = sanitizeAnnounce(c.scheduledWipecorpsesAnnounceMessage());
                     String annOut = rcon.run("announce " + msg);
                     announcedThisCycle.set(true);
-                    if ("dynamic".equals(runtimeEnabledMode.get())) {
+                    if ("dynamic".equals(c.scheduledWipecorpsesEnabledMode())) {
                         pendingWipeCommittedDynamic.set(true);
                         LOG.info("Scheduled wipecorpses: pre-wipe announce sent ({} min to wipe); dynamic latch on — wipe will run on schedule even if population drops: {}",
                                 warnMin, oneLine(annOut));
@@ -263,7 +212,7 @@ public final class ScheduledCorpseWipeScheduler {
     }
 
     private static long nowEpochSec() {
-        return System.currentTimeMillis() / 1000L;
+        return System.currentTimeMillis() / 1000;
     }
 
     private static String sanitizeAnnounce(String raw) {

@@ -1,6 +1,6 @@
 package com.isle.evrima.bot.discord;
 
-import com.isle.evrima.bot.config.BotConfig;
+import com.isle.evrima.bot.config.LiveBotConfig;
 import com.isle.evrima.bot.db.Database;
 import com.isle.evrima.bot.ecosystem.EcosystemEmbeds;
 import com.isle.evrima.bot.ecosystem.PopulationDashboardService;
@@ -24,22 +24,22 @@ public final class PopulationDashboardScheduler {
     private static final Logger LOG = LoggerFactory.getLogger(PopulationDashboardScheduler.class);
     private static final String KV_MESSAGE = "population_dashboard_message_id";
 
-    private final BotConfig config;
+    private final LiveBotConfig live;
     private final Database database;
     private final PopulationDashboardService population;
 
-    public PopulationDashboardScheduler(BotConfig config, Database database, PopulationDashboardService population) {
-        this.config = Objects.requireNonNull(config, "config");
+    public PopulationDashboardScheduler(LiveBotConfig live, Database database, PopulationDashboardService population) {
+        this.live = Objects.requireNonNull(live, "live");
         this.database = Objects.requireNonNull(database, "database");
         this.population = Objects.requireNonNull(population, "population");
     }
 
     public void start(JDA jda) {
-        long chId = config.populationDashboardChannelId();
+        long chId = live.get().populationDashboardChannelId();
         if (chId == 0L) {
             return;
         }
-        int minutes = Math.max(1, config.populationDashboardIntervalMinutes());
+        int minutes = Math.max(1, live.get().populationDashboardIntervalMinutes());
         ScheduledExecutorService ex = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "evrima-population-dashboard");
             t.setDaemon(true);
@@ -74,7 +74,7 @@ public final class PopulationDashboardScheduler {
         database.recordSteamIdsFromPlayerlistRaw(res.data().rawPlayerlist());
 
         var embed = EcosystemEmbeds.build(
-                config.ecosystemTitle(),
+                live.get().ecosystemTitle(),
                 res.data(),
                 population.taxonomy(),
                 ch.getGuild());

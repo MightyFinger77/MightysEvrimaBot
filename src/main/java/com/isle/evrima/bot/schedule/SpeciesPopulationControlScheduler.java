@@ -1,6 +1,7 @@
 package com.isle.evrima.bot.schedule;
 
 import com.isle.evrima.bot.config.BotConfig;
+import com.isle.evrima.bot.config.LiveBotConfig;
 import com.isle.evrima.bot.ecosystem.PopulationDashboardService;
 import com.isle.evrima.bot.ecosystem.PopulationSnapshot;
 import com.isle.evrima.bot.rcon.RconService;
@@ -20,103 +21,84 @@ import java.util.Set;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Dynamically locks/unlocks configured species by editing Evrima playables with RCON {@code updateplayables}.
  * Lock when {@code count >= cap}; unlock when {@code count <= cap - unlock_below_offset}.
+ * All limits and enabled flag come from {@code config.yml} (reloaded when admins change them via Discord).
  */
 public final class SpeciesPopulationControlScheduler {
 
     private static final Logger LOG = LoggerFactory.getLogger(SpeciesPopulationControlScheduler.class);
 
-    private final BotConfig config;
+    private final LiveBotConfig live;
     private final RconService rcon;
     private final PopulationDashboardService population;
     private final Set<String> disabledByScheduler = new LinkedHashSet<>();
-    private final AtomicBoolean runtimeEnabled;
+    private volatile BotConfig configCache;
+    private final Object nameLock = new Object();
     private final Map<String, String> baseNameByLower = new LinkedHashMap<>();
-    private final Map<String, Integer> capOverridesByLower = new LinkedHashMap<>();
 
-    public SpeciesPopulationControlScheduler(BotConfig config, RconService rcon, PopulationDashboardService population) {
-        this.config = Objects.requireNonNull(config, "config");
+    public SpeciesPopulationControlScheduler(LiveBotConfig live, RconService rcon, PopulationDashboardService population) {
+        this.live = Objects.requireNonNull(live, "live");
         this.rcon = Objects.requireNonNull(rcon, "rcon");
         this.population = Objects.requireNonNull(population, "population");
-        this.runtimeEnabled = new AtomicBoolean(config.speciesPopulationControlEnabled());
-        for (String s : config.speciesPopulationCaps().keySet()) {
-            baseNameByLower.put(s.toLowerCase(Locale.ROOT), s);
+    }
+
+    private BotConfig cfg() {
+        BotConfig c = live.get();
+        if (c != configCache) {
+            synchronized (nameLock) {
+                if (c != configCache) {
+                    baseNameByLower.clear();
+                    for (String s : c.speciesPopulationCaps().keySet()) {
+                        baseNameByLower.put(s.toLowerCase(Locale.ROOT), s);
+                    }
+                    configCache = c;
+                }
+            }
         }
+        return c;
+    }
+
+    /**
+     * Call after {@link LiveBotConfig#reloadFromDisk()} so the case-insensitive species name map matches the new caps.
+     */
+    public void invalidateConfigCache() {
+        configCache = null;
     }
 
     public void start() {
-        if (config.speciesPopulationCaps().isEmpty()) {
-            LOG.warn("species_population_control: enabled but no caps configured — scheduler not started");
-            return;
-        }
-        int sec = Math.max(10, Math.min(600, config.speciesPopulationControlIntervalSeconds()));
+        BotConfig c = cfg();
+        int sec = Math.max(10, Math.min(600, c.speciesPopulationControlIntervalSeconds()));
         ScheduledExecutorService ex = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "evrima-species-pop-control");
             t.setDaemon(true);
             return t;
         });
         ex.scheduleAtFixedRate(this::runSafe, 45, sec, TimeUnit.SECONDS);
-        LOG.info("Species population control scheduler ready: every {}s, {} capped species, unlock offset {}, runtime_enabled={}",
-                sec, config.speciesPopulationCaps().size(), config.speciesPopulationControlUnlockBelowOffset(), runtimeEnabled.get());
+        LOG.info("Species population control scheduler ready: every {}s, {} capped species, unlock offset {}, enabled={}",
+                sec, c.speciesPopulationCaps().size(), c.speciesPopulationControlUnlockBelowOffset(),
+                c.speciesPopulationControlEnabled());
     }
 
     public boolean hasConfiguredCaps() {
-        return !config.speciesPopulationCaps().isEmpty();
+        return !cfg().speciesPopulationCaps().isEmpty();
     }
 
     public boolean isEnabled() {
-        return runtimeEnabled.get();
+        return cfg().speciesPopulationControlEnabled();
     }
 
-    public void setEnabled(boolean enabled) {
-        runtimeEnabled.set(enabled);
-    }
-
-    /** Sets runtime cap override (0 = unmanaged/unlimited for that species). */
-    public synchronized void setCapOverride(String species, int cap) {
-        String normalized = normalizeSpecies(species);
-        capOverridesByLower.put(normalized.toLowerCase(Locale.ROOT), Math.max(0, cap));
-    }
-
-    public synchronized void clearCapOverride(String species) {
-        String normalized = normalizeSpecies(species);
-        capOverridesByLower.remove(normalized.toLowerCase(Locale.ROOT));
-    }
-
-    public synchronized Map<String, Integer> listCapOverrides() {
-        Map<String, Integer> out = new LinkedHashMap<>();
-        for (Map.Entry<String, Integer> e : capOverridesByLower.entrySet()) {
-            String name = baseNameByLower.getOrDefault(e.getKey(), e.getKey());
-            out.put(name, e.getValue());
-        }
-        return out;
-    }
-
-    /** Effective cap map (config base + overrides). */
-    public synchronized Map<String, Integer> effectiveCaps() {
-        Map<String, Integer> out = new LinkedHashMap<>(config.speciesPopulationCaps());
-        for (Map.Entry<String, Integer> e : capOverridesByLower.entrySet()) {
-            String name = baseNameByLower.getOrDefault(e.getKey(), e.getKey());
-            out.put(name, e.getValue());
-        }
-        return out;
-    }
-
-    private String normalizeSpecies(String species) {
-        String s = species == null ? "" : species.trim();
-        if (s.isEmpty()) {
-            throw new IllegalArgumentException("Species cannot be empty.");
-        }
-        String lower = s.toLowerCase(Locale.ROOT);
-        return baseNameByLower.getOrDefault(lower, s);
+    public Map<String, Integer> effectiveCaps() {
+        return new LinkedHashMap<>(cfg().speciesPopulationCaps());
     }
 
     private void runSafe() {
-        if (!runtimeEnabled.get()) {
+        if (!cfg().speciesPopulationControlEnabled()) {
+            return;
+        }
+        if (cfg().speciesPopulationCaps().isEmpty()) {
             return;
         }
         try {
@@ -143,7 +125,8 @@ public final class SpeciesPopulationControlScheduler {
         Set<String> nextDisabled = new LinkedHashSet<>(disabledByScheduler);
         List<String> changes = new ArrayList<>();
 
-        int unlockOffset = config.speciesPopulationControlUnlockBelowOffset();
+        BotConfig c = cfg();
+        int unlockOffset = c.speciesPopulationControlUnlockBelowOffset();
         Map<String, Integer> caps = effectiveCaps();
         for (Map.Entry<String, Integer> e : caps.entrySet()) {
             String species = e.getKey();
@@ -192,7 +175,7 @@ public final class SpeciesPopulationControlScheduler {
         disabledByScheduler.addAll(nextDisabled);
         String summary = String.join(" | ", changes);
         LOG.info("species_population_control: {}", summary);
-        if (config.speciesPopulationControlAnnounceChanges()) {
+        if (c.speciesPopulationControlAnnounceChanges()) {
             String msg = "[Species control] " + summary;
             rcon.run("announce " + msg.replace('\n', ' '));
         }
@@ -271,9 +254,7 @@ public final class SpeciesPopulationControlScheduler {
         }
     }
 
-    /** Convenience immutable view for status output. */
-    public synchronized Map<String, Integer> effectiveCapsReadOnly() {
+    public Map<String, Integer> effectiveCapsReadOnly() {
         return Collections.unmodifiableMap(new LinkedHashMap<>(effectiveCaps()));
     }
 }
-

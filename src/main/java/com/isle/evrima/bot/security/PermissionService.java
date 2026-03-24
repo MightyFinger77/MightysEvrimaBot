@@ -1,6 +1,7 @@
 package com.isle.evrima.bot.security;
 
 import com.isle.evrima.bot.config.BotConfig;
+import com.isle.evrima.bot.config.LiveBotConfig;
 import net.dv8tion.jda.api.entities.Member;
 import net.dv8tion.jda.api.entities.Role;
 
@@ -12,34 +13,34 @@ import java.util.stream.Collectors;
 
 public final class PermissionService {
 
-    private final Set<Long> moderatorRoles;
-    private final Set<Long> adminRoles;
-    private final Set<Long> headAdminRoles;
+    private final LiveBotConfig live;
 
-    public PermissionService(BotConfig config) {
-        this.moderatorRoles = new HashSet<>(config.moderatorRoleIds());
-        this.adminRoles = new HashSet<>(config.adminRoleIds());
-        this.headAdminRoles = new HashSet<>(config.headAdminRoleIds());
+    public PermissionService(LiveBotConfig live) {
+        this.live = live;
+    }
+
+    private BotConfig cfg() {
+        return live.get();
     }
 
     public int moderatorRoleCount() {
-        return moderatorRoles.size();
+        return cfg().moderatorRoleIds().size();
     }
 
     public int adminRoleCount() {
-        return adminRoles.size();
+        return cfg().adminRoleIds().size();
     }
 
     public int headAdminRoleCount() {
-        return headAdminRoles.size();
+        return cfg().headAdminRoleIds().size();
     }
 
     public boolean anyModeratorRolesConfigured() {
-        return !moderatorRoles.isEmpty();
+        return !cfg().moderatorRoleIds().isEmpty();
     }
 
     public boolean anyAdminOrHeadRolesConfigured() {
-        return !adminRoles.isEmpty() || !headAdminRoles.isEmpty();
+        return !cfg().adminRoleIds().isEmpty() || !cfg().headAdminRoleIds().isEmpty();
     }
 
     /**
@@ -50,6 +51,9 @@ public final class PermissionService {
         if (member == null) {
             return hit;
         }
+        Set<Long> moderatorRoles = new HashSet<>(cfg().moderatorRoleIds());
+        Set<Long> adminRoles = new HashSet<>(cfg().adminRoleIds());
+        Set<Long> headAdminRoles = new HashSet<>(cfg().headAdminRoleIds());
         for (Role r : member.getRoles()) {
             long id = r.getIdLong();
             if (moderatorRoles.contains(id) || adminRoles.contains(id) || headAdminRoles.contains(id)) {
@@ -88,7 +92,7 @@ public final class PermissionService {
                     + "\n\nUse `/evrima account debug` to compare IDs.";
         }
         return base + "\n\n(Matched configured staff role id(s): " + matches + " — if you still see this, "
-                + "restart the bot after editing `config.yml`.)";
+                + "reload config or restart the bot after editing `config.yml`.)";
     }
 
     public String denyModeratorMessage(Member member) {
@@ -104,7 +108,7 @@ public final class PermissionService {
     }
 
     public String denyHeadAdminMessage(Member member) {
-        if (headAdminRoles.isEmpty()) {
+        if (cfg().headAdminRoleIds().isEmpty()) {
             return "No **head_admin** role IDs in `config.yml`. Add `discord.roles.head_admin`, restart, assign that role.";
         }
         return "You need **head_admin**: assign a role listed under `discord.roles.head_admin`. "
@@ -115,6 +119,9 @@ public final class PermissionService {
         if (member == null) {
             return StaffTier.PLAYER;
         }
+        Set<Long> moderatorRoles = new HashSet<>(cfg().moderatorRoleIds());
+        Set<Long> adminRoles = new HashSet<>(cfg().adminRoleIds());
+        Set<Long> headAdminRoles = new HashSet<>(cfg().headAdminRoleIds());
         StaffTier best = StaffTier.PLAYER;
         for (Role r : member.getRoles()) {
             long id = r.getIdLong();

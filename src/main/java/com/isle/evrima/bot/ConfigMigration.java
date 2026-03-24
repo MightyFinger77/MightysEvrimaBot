@@ -21,15 +21,18 @@ import java.util.Objects;
 import java.util.Set;
 
 /**
- * Merges the on-disk {@code config.yml} with bundled {@code config.example.yml} from the JAR:
- * preserves comments/structure from defaults, keeps user values where keys still exist, adds new keys,
- * removes keys no longer in defaults, and updates {@code config_version}. Same idea as Locktight's
- * plugin config migration (line-preserving merge).
+ * Merges the on-disk {@code config.yml} with the bundled default template ({@code config.yml} on the classpath):
+ * keeps the user's preamble (lines before the first top-level key, e.g. a custom banner), then merges body lines
+ * from the bundled file — comments and key order from the template, user values substituted where paths match,
+ * new template keys added when missing, and {@code config_version} updated. Same idea as Locktight-style migration.
+ * <p>
+ * Top-level keys that exist only in the user file (not in the bundled template) are not emitted; extend the bundled
+ * file in source if you need new official keys.
  */
 public final class ConfigMigration {
 
     private static final Logger LOG = LoggerFactory.getLogger(ConfigMigration.class);
-    private static final String BUNDLED_DEFAULT = "config.example.yml";
+    private static final String BUNDLED_DEFAULT = "config.yml";
     private static final String VERSION_KEY = "config_version";
 
     private ConfigMigration() {}
@@ -87,15 +90,23 @@ public final class ConfigMigration {
             return;
         }
 
-        List<String> mergedLines = mergeConfigLines(defaultLines, currentMap, defaultMap);
+        int userKeyStart = indexOfFirstTopLevelKeyLine(currentLines);
+        int defaultKeyStart = indexOfFirstTopLevelKeyLine(defaultLines);
+        List<String> userHeader = currentLines.subList(0, userKeyStart);
+        List<String> defaultBody = defaultLines.subList(defaultKeyStart, defaultLines.size());
+        List<String> mergedBody = mergeConfigLines(defaultBody, currentMap, defaultMap);
         Set<String> deprecated = findDeprecatedKeys(currentMap, defaultMap);
         if (!deprecated.isEmpty()) {
-            LOG.info("Config migration: removed deprecated keys no longer in defaults: {}", String.join(", ", deprecated));
+            LOG.info("Config migration: keys in your file with no path in the bundled template (omitted from merged output): {}",
+                    String.join(", ", deprecated));
         }
-        updateConfigVersionLine(mergedLines, defaultVersion, defaultLines);
+        updateConfigVersionLine(mergedBody, defaultVersion, defaultLines);
 
-        Files.write(configYamlPath, mergedLines, StandardCharsets.UTF_8);
-        LOG.info("Config migration completed — merged with bundled defaults (config_version -> {}). New keys from defaults were added; obsolete keys removed.",
+        List<String> out = new ArrayList<>(userHeader.size() + mergedBody.size());
+        out.addAll(userHeader);
+        out.addAll(mergedBody);
+        Files.write(configYamlPath, out, StandardCharsets.UTF_8);
+        LOG.info("Config migration completed — config_version -> {}; preamble preserved; body merged with bundled template.",
                 defaultVersion);
     }
 
@@ -463,5 +474,27 @@ public final class ConfigMigration {
             }
         }
         return sb.toString();
+    }
+
+    /** Index of the first line that starts a top-level YAML mapping key (column 0, {@code key:}). */
+    private static int indexOfFirstTopLevelKeyLine(List<String> lines) {
+        for (int i = 0; i < lines.size(); i++) {
+            if (isTopLevelYamlKeyLine(lines.get(i))) {
+                return i;
+            }
+        }
+        return 0;
+    }
+
+    private static boolean isTopLevelYamlKeyLine(String line) {
+        if (line.isEmpty() || line.charAt(0) == ' ' || line.charAt(0) == '\t') {
+            return false;
+        }
+        int colon = line.indexOf(':');
+        if (colon <= 0) {
+            return false;
+        }
+        String key = line.substring(0, colon).trim();
+        return key.matches("[A-Za-z0-9_-]+");
     }
 }
