@@ -58,17 +58,13 @@ public final class EcosystemEmbeds {
         eb.setTitle(title.isBlank() ? "Ecosystem tracker" : title);
         eb.setColor(new Color(0x57F287));
         StringBuilder pop = new StringBuilder();
-        pop.append("**Players (estimate):** ").append(total).append("\n");
-        pop.append("**Parsed segments:** ").append(snap.parsedSegmentCount());
-        if (snap.steamId64Count() > 0) {
-            pop.append("\n**SteamID64s in text:** ").append(snap.steamId64Count());
-        }
+        pop.append("**Players:** ").append(total).append("\n");
         if (snap.declaredPlayerCount() > 0) {
-            pop.append("\n**Declared in RCON text:** ").append(snap.declaredPlayerCount());
+            pop.append("**Declared in RCON text:** ").append(snap.declaredPlayerCount());
         }
         eb.addField("Live server population", pop.toString(), false);
         eb.addField("Overview", overview.toString(), false);
-        eb.addField("Species (parsed)", speciesBlock.isBlank() ? "—" : speciesBlock, false);
+        eb.addField("Species", speciesBlock.isBlank() ? "—" : speciesBlock, false);
 
         return eb.build();
     }

@@ -6,6 +6,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -16,6 +17,9 @@ import java.util.regex.Pattern;
  * SteamID64 / "N players" hints for totals.
  */
 public final class PlayerlistPopulationParser {
+
+    /** One connected player as read from RCON {@code playerlist} (Steam ID + display name when both are known). */
+    public record PlayerlistNameEntry(String steamId64, String displayName) {}
 
     private static final Pattern HEADERISH = Pattern.compile(
             "^(#+|[-=*_]{3,}|online\\s*players?|player\\s*list|players?\\s*online|no\\s*players?|none|total\\s*[:\\s]*\\d+)\\.?$",
@@ -284,6 +288,144 @@ public final class PlayerlistPopulationParser {
         return n;
     }
 
+    /** True if {@code s} is a full SteamID64 string (17 digits, {@code 7656119…}). */
+    public static boolean isSteamId64(String s) {
+        if (s == null) {
+            return false;
+        }
+        return STEAM_ID64.matcher(s.strip()).matches();
+    }
+
+    /**
+     * Pairs SteamID64 with display names from raw {@code playerlist} text. Handles the common two-line comma layout
+     * (IDs on one line, names on the next) and, otherwise, segments that contain a single ID with a name before/after it.
+     */
+    public static List<PlayerlistNameEntry> listSteamIdDisplayPairs(String rawPlayerlist) {
+        if (rawPlayerlist == null || rawPlayerlist.isBlank()) {
+            return List.of();
+        }
+        Optional<SteamNameLines> two = tryExtractSteamNameCommaLines(rawPlayerlist);
+        if (two.isPresent()) {
+            return dedupeSteamPairs(zipCommaSteamNames(two.get()));
+        }
+        List<PlayerlistNameEntry> fromSeg = new ArrayList<>();
+        appendSingleSteamSegmentPairs(rawPlayerlist, fromSeg);
+        return dedupeSteamPairs(fromSeg);
+    }
+
+    private record SteamNameLines(String idLine, String nameLine) {}
+
+    private static Optional<SteamNameLines> tryExtractSteamNameCommaLines(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return Optional.empty();
+        }
+        List<String> chunks = new ArrayList<>();
+        for (String ln : raw.replace("\r\n", "\n").split("\n")) {
+            String s = ln.strip();
+            if (!s.isEmpty()) {
+                chunks.add(s);
+            }
+        }
+        if (chunks.size() < 2) {
+            return Optional.empty();
+        }
+        int idx = 0;
+        if (chunks.get(0).equalsIgnoreCase("playerlist")) {
+            idx++;
+        }
+        if (idx >= chunks.size()) {
+            return Optional.empty();
+        }
+        String idLine = chunks.get(idx);
+        if (!commaSeparatedLineIsMostlySteamIds(idLine, 0.82)) {
+            return Optional.empty();
+        }
+        idx++;
+        if (idx >= chunks.size()) {
+            return Optional.empty();
+        }
+        String nameLine = chunks.get(idx);
+        if (commaSeparatedLineIsMostlySteamIds(nameLine, 0.4)) {
+            return Optional.empty();
+        }
+        if (nameLine.chars().noneMatch(Character::isLetter)) {
+            return Optional.empty();
+        }
+        int steamTokens = countSteamMatchesInText(idLine);
+        int nameTokens = countCommaSeparatedTokens(nameLine);
+        if (nameTokens < 3) {
+            return Optional.empty();
+        }
+        int slack = Math.max(5, steamTokens / 15);
+        if (Math.abs(nameTokens - steamTokens) <= slack) {
+            return Optional.of(new SteamNameLines(idLine, nameLine));
+        }
+        if (steamTokens >= 10 && nameTokens >= 8 && nameTokens < steamTokens) {
+            return Optional.of(new SteamNameLines(idLine, nameLine));
+        }
+        return Optional.empty();
+    }
+
+    private static List<PlayerlistNameEntry> zipCommaSteamNames(SteamNameLines lines) {
+        List<String> st = commaSplitNonEmpty(lines.idLine());
+        List<String> nt = commaSplitNonEmpty(lines.nameLine());
+        int n = Math.min(st.size(), nt.size());
+        List<PlayerlistNameEntry> out = new ArrayList<>(n);
+        for (int i = 0; i < n; i++) {
+            String sid = st.get(i);
+            if (STEAM_ID64.matcher(sid).matches()) {
+                out.add(new PlayerlistNameEntry(sid, nt.get(i)));
+            }
+        }
+        return out;
+    }
+
+    private static List<String> commaSplitNonEmpty(String line) {
+        List<String> out = new ArrayList<>();
+        for (String p : line.split(",")) {
+            String t = p.strip();
+            if (!t.isEmpty()) {
+                out.add(t);
+            }
+        }
+        return out;
+    }
+
+    private static List<PlayerlistNameEntry> dedupeSteamPairs(List<PlayerlistNameEntry> list) {
+        Map<String, PlayerlistNameEntry> map = new LinkedHashMap<>();
+        for (PlayerlistNameEntry e : list) {
+            map.putIfAbsent(e.steamId64(), e);
+        }
+        return List.copyOf(map.values());
+    }
+
+    private static void appendSingleSteamSegmentPairs(String raw, List<PlayerlistNameEntry> out) {
+        for (String seg : expandToSegments(raw)) {
+            Matcher m = STEAM_ID64.matcher(seg);
+            String steam = null;
+            int start = -1;
+            while (m.find()) {
+                if (steam == null) {
+                    steam = m.group();
+                    start = m.start();
+                } else {
+                    steam = null;
+                    break;
+                }
+            }
+            if (steam == null || start < 0) {
+                continue;
+            }
+            String left = seg.substring(0, start).strip();
+            String right = seg.substring(start + steam.length()).strip();
+            String name = !right.isEmpty() ? right : left;
+            if (name.isEmpty() || STEAM_ID64.matcher(name).find()) {
+                continue;
+            }
+            out.add(new PlayerlistNameEntry(steam, name));
+        }
+    }
+
     /** Distinct SteamID64 values appearing in raw RCON text (e.g. {@code playerlist}). */
     public static Set<String> distinctSteamIds(String raw) {
         LinkedHashSet<String> out = new LinkedHashSet<>();
@@ -389,52 +531,7 @@ public final class PlayerlistPopulationParser {
      * Your build’s {@code playerlist} can be two comma-separated lines: SteamID64s, then display names — no species.
      */
     public static boolean isSteamIdsPlusDisplayNamesOnly(String raw) {
-        if (raw == null || raw.isBlank()) {
-            return false;
-        }
-        List<String> chunks = new ArrayList<>();
-        for (String ln : raw.replace("\r\n", "\n").split("\n")) {
-            String s = ln.strip();
-            if (!s.isEmpty()) {
-                chunks.add(s);
-            }
-        }
-        if (chunks.size() < 2) {
-            return false;
-        }
-        int idx = 0;
-        if (chunks.get(0).equalsIgnoreCase("playerlist")) {
-            idx++;
-        }
-        if (idx >= chunks.size()) {
-            return false;
-        }
-        String idLine = chunks.get(idx);
-        if (!commaSeparatedLineIsMostlySteamIds(idLine, 0.82)) {
-            return false;
-        }
-        idx++;
-        if (idx >= chunks.size()) {
-            return false;
-        }
-        String nameLine = chunks.get(idx);
-        if (commaSeparatedLineIsMostlySteamIds(nameLine, 0.4)) {
-            return false;
-        }
-        if (nameLine.chars().noneMatch(Character::isLetter)) {
-            return false;
-        }
-        int steamTokens = countSteamMatchesInText(idLine);
-        int nameTokens = countCommaSeparatedTokens(nameLine);
-        if (nameTokens < 3) {
-            return false;
-        }
-        int slack = Math.max(5, steamTokens / 15);
-        if (Math.abs(nameTokens - steamTokens) <= slack) {
-            return true;
-        }
-        // Truncated paste / log: fewer names than IDs but same two-line shape
-        return steamTokens >= 10 && nameTokens >= 8 && nameTokens < steamTokens;
+        return tryExtractSteamNameCommaLines(raw).isPresent();
     }
 
     private static int countCommaSeparatedTokens(String line) {

@@ -42,6 +42,11 @@ public final class BotConfig {
     private final boolean serverStatusTopicShowUniqueSeen;
     /** If true, append bot/JVM uptime (not the same as dedicated server uptime). */
     private final boolean serverStatusTopicShowBridgeUptime;
+    /**
+     * After each {@code setTopic} completes, wait this many seconds before PATCHing the next channel when
+     * {@link #serverStatusTopicChannelIds()} has 2+ ids. Discord’s shared guild bucket often returns Retry-After ~180s.
+     */
+    private final int serverStatusTopicMultiChannelStaggerSeconds;
     /** Periodically set RCON {@code aidensity} from online % of {@link #adaptiveAiDensityMaxPlayers()}. */
     private final boolean adaptiveAiDensityEnabled;
     private final int adaptiveAiDensityIntervalMinutes;
@@ -58,6 +63,8 @@ public final class BotConfig {
     /** Empty = disabled (even if channel_id set) */
     private final String ingameChatLogPathRaw;
     private final int ingameChatLogPollSeconds;
+    /** When false, {@code [Spatial]} / {@code [Local]} chat lines are dropped after parse (global-only mirror). */
+    private final boolean ingameChatLogMirrorLocalChat;
     /** Lines containing any of these substrings are mirrored (e.g. chat + kill/death markers). */
     private final List<String> ingameChatLogLineContainsAny;
 
@@ -86,6 +93,7 @@ public final class BotConfig {
             String serverStatusTopicTimezoneId,
             boolean serverStatusTopicShowUniqueSeen,
             boolean serverStatusTopicShowBridgeUptime,
+            int serverStatusTopicMultiChannelStaggerSeconds,
             boolean adaptiveAiDensityEnabled,
             int adaptiveAiDensityIntervalMinutes,
             int adaptiveAiDensityMaxPlayers,
@@ -96,6 +104,7 @@ public final class BotConfig {
             long ingameChatLogChannelId,
             String ingameChatLogPathRaw,
             int ingameChatLogPollSeconds,
+            boolean ingameChatLogMirrorLocalChat,
             List<String> ingameChatLogLineContainsAny
     ) {
         this.discordToken = discordToken;
@@ -122,6 +131,7 @@ public final class BotConfig {
         this.serverStatusTopicTimezoneId = serverStatusTopicTimezoneId;
         this.serverStatusTopicShowUniqueSeen = serverStatusTopicShowUniqueSeen;
         this.serverStatusTopicShowBridgeUptime = serverStatusTopicShowBridgeUptime;
+        this.serverStatusTopicMultiChannelStaggerSeconds = serverStatusTopicMultiChannelStaggerSeconds;
         this.adaptiveAiDensityEnabled = adaptiveAiDensityEnabled;
         this.adaptiveAiDensityIntervalMinutes = adaptiveAiDensityIntervalMinutes;
         this.adaptiveAiDensityMaxPlayers = adaptiveAiDensityMaxPlayers;
@@ -132,6 +142,7 @@ public final class BotConfig {
         this.ingameChatLogChannelId = ingameChatLogChannelId;
         this.ingameChatLogPathRaw = ingameChatLogPathRaw;
         this.ingameChatLogPollSeconds = ingameChatLogPollSeconds;
+        this.ingameChatLogMirrorLocalChat = ingameChatLogMirrorLocalChat;
         this.ingameChatLogLineContainsAny = List.copyOf(ingameChatLogLineContainsAny);
     }
 
@@ -215,6 +226,13 @@ public final class BotConfig {
         String stTz = stringOrEmpty(statusTopic.get("timezone"));
         boolean stUnique = parseBooleanYaml(statusTopic.get("show_unique_seen"), true);
         boolean stBridgeUp = parseBooleanYaml(statusTopic.get("show_bridge_uptime"), false);
+        int stStagger = (int) parseLong(statusTopic.get("multi_channel_stagger_seconds"), 210L);
+        if (stStagger < 120) {
+            stStagger = 120;
+        }
+        if (stStagger > 900) {
+            stStagger = 900;
+        }
 
         Map<String, Object> adaptiveAi = mapOrEmpty(root.get("adaptive_ai_density"));
         boolean aaEnabled = parseBooleanYaml(adaptiveAi.get("enabled"), false);
@@ -256,6 +274,7 @@ public final class BotConfig {
             chatPoll = 60;
         }
         List<String> chatMarkers = parseLogLineMarkers(chatLog.get("line_contains"));
+        boolean chatMirrorLocal = parseBooleanYaml(chatLog.get("mirror_local_chat"), false);
 
         return new BotConfig(
                 token,
@@ -282,6 +301,7 @@ public final class BotConfig {
                 stTz,
                 stUnique,
                 stBridgeUp,
+                stStagger,
                 aaEnabled,
                 aaInterval,
                 aaMaxPlayers,
@@ -292,6 +312,7 @@ public final class BotConfig {
                 chatCh,
                 chatPath,
                 chatPoll,
+                chatMirrorLocal,
                 chatMarkers
         );
     }
@@ -555,6 +576,14 @@ public final class BotConfig {
         return serverStatusTopicShowBridgeUptime;
     }
 
+    /**
+     * Delay between sequential topic updates per channel when multiple {@code server_status_topic} channels are set.
+     * Default 210s — above common Discord Retry-After (~183s) for {@code PATCH /channels}.
+     */
+    public int serverStatusTopicMultiChannelStaggerSeconds() {
+        return serverStatusTopicMultiChannelStaggerSeconds;
+    }
+
     public boolean adaptiveAiDensityEnabled() {
         return adaptiveAiDensityEnabled;
     }
@@ -610,6 +639,14 @@ public final class BotConfig {
     /** How often to poll the log file (1–60 seconds). */
     public int ingameChatLogPollSeconds() {
         return ingameChatLogPollSeconds;
+    }
+
+    /**
+     * If true, proximity lines ({@code [Spatial]}, {@code [Local]}) are mirrored like global chat.
+     * If false (default), they are filtered out after parse.
+     */
+    public boolean ingameChatLogMirrorLocalChat() {
+        return ingameChatLogMirrorLocalChat;
     }
 
     /**

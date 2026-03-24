@@ -83,18 +83,18 @@ public final class CommandRegistry {
                         new SubcommandData("announce", "In-game broadcast (RCON announce)")
                                 .addOption(OptionType.STRING, "message", "Message text", true),
                         new SubcommandData("playerlist", "Fetch connected players (RCON playerlist; raw text)"),
-                        new SubcommandData("kick", "Kick a player by SteamID64 (RCON kick)")
-                                .addOption(OptionType.STRING, "steam_id", "SteamID64", true)
+                        new SubcommandData("kick", "Kick a player (RCON kick)")
+                                .addOption(OptionType.STRING, "player", "SteamID64 or in-game name (from live playerlist)", true)
                                 .addOption(OptionType.STRING, "reason", "Reason", true),
-                        new SubcommandData("ban", "Ban by SteamID64 (RCON ban; format is game-specific)")
-                                .addOption(OptionType.STRING, "steam_id", "SteamID64", true)
+                        new SubcommandData("ban", "Ban a player (RCON ban; format is game-specific)")
+                                .addOption(OptionType.STRING, "player", "SteamID64 or in-game name (from live playerlist)", true)
                                 .addOption(OptionType.STRING, "reason", "Reason", true)
                                 .addOption(OptionType.INTEGER, "minutes", "Ban minutes (0 = server default style)", false),
                         new SubcommandData("dm", "Private in-game message (RCON directmessage)")
-                                .addOption(OptionType.STRING, "steam_id", "SteamID64", true)
+                                .addOption(OptionType.STRING, "player", "SteamID64 or in-game name (from live playerlist)", true)
                                 .addOption(OptionType.STRING, "message", "Message", true),
-                        new SubcommandData("getplayer", "Dump player/server fields for a SteamID64 (RCON getplayerdata)")
-                                .addOption(OptionType.STRING, "steam_id", "SteamID64", true),
+                        new SubcommandData("getplayer", "Dump player/server fields (RCON getplayerdata)")
+                                .addOption(OptionType.STRING, "player", "SteamID64 or in-game name (from live playerlist)", true),
                         new SubcommandData("wipecorpses", "Remove corpses / cleanup bodies (RCON wipecorpses)"),
                         new SubcommandData("save", "Tell the game to save (RCON save)"),
                         new SubcommandData("unlink", "Remove this bot’s stored Steam link for a Discord user (not in-game)")

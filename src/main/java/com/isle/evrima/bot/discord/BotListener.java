@@ -3,6 +3,8 @@ package com.isle.evrima.bot.discord;
 import com.isle.evrima.bot.config.BotConfig;
 import com.isle.evrima.bot.db.Database;
 import com.isle.evrima.bot.ecosystem.EcosystemEmbeds;
+import com.isle.evrima.bot.ecosystem.PlayerlistPopulationParser;
+import com.isle.evrima.bot.ecosystem.PlayerTargetResolver;
 import com.isle.evrima.bot.ecosystem.PopulationDashboardService;
 import com.isle.evrima.bot.ecosystem.SpeciesTaxonomy;
 import com.isle.evrima.bot.rcon.EvrimaRcon;
@@ -229,7 +231,7 @@ public final class BotListener extends ListenerAdapter {
                                 hookEditEphemeral(hook, "```\n" + out + "\n```");
                             }
                             case "kick" -> {
-                                String steam = requiredString(event, "steam_id").trim();
+                                String steam = resolveAdminPlayerTarget(requiredString(event, "player"));
                                 String reason = requiredString(event, "reason");
                                 // Space after SteamID — same wire format as before (many builds accept this).
                                 String out = rcon.run("kick " + steam + " " + reason.replace('\n', ' '));
@@ -237,7 +239,7 @@ public final class BotListener extends ListenerAdapter {
                                 hookEditEphemeral(hook, "RCON: " + out);
                             }
                             case "ban" -> {
-                                String steam = requiredString(event, "steam_id").trim();
+                                String steam = resolveAdminPlayerTarget(requiredString(event, "player"));
                                 String reason = requiredString(event, "reason");
                                 OptionMapping minOpt = event.getOption("minutes");
                                 int minutes = minOpt == null ? 0 : Math.max(0, (int) minOpt.getAsLong());
@@ -247,14 +249,14 @@ public final class BotListener extends ListenerAdapter {
                                 hookEditEphemeral(hook, "RCON: " + out);
                             }
                             case "dm" -> {
-                                String steam = requiredString(event, "steam_id").trim();
+                                String steam = resolveAdminPlayerTarget(requiredString(event, "player"));
                                 String message = requiredString(event, "message");
                                 String out = rcon.run(EvrimaRcon.lineDirectMessage(steam, message));
                                 database.appendAudit(event.getUser().getId(), "rcon_dm", steam);
                                 hookEditEphemeral(hook, "RCON: " + out);
                             }
                             case "getplayer" -> {
-                                String steam = requiredString(event, "steam_id").trim();
+                                String steam = resolveAdminPlayerTarget(requiredString(event, "player"));
                                 String out = rcon.run("getplayerdata " + steam);
                                 database.appendAudit(event.getUser().getId(), "rcon_getplayer", steam);
                                 hookEditEphemeral(hook, "```\n" + out + "\n```");
@@ -580,6 +582,17 @@ public final class BotListener extends ListenerAdapter {
             sb.append(ALPH.charAt(secureRandom.nextInt(ALPH.length())));
         }
         return sb.toString();
+    }
+
+    /**
+     * SteamID64 is used as-is. Anything else is resolved against a fresh RCON {@code playerlist} (display name match).
+     */
+    private String resolveAdminPlayerTarget(String query) throws IOException {
+        String q = query.strip();
+        if (PlayerlistPopulationParser.isSteamId64(q)) {
+            return q;
+        }
+        return PlayerTargetResolver.resolveToSteamOrThrow(q, rcon.run("playerlist"));
     }
 
     private static boolean steamIdLooksValid(String s) {

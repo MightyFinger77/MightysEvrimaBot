@@ -27,7 +27,8 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Tails the dedicated server log file and posts matching lines (global chat, kill/death, etc.) to a Discord channel.
+ * Tails the dedicated server log file and posts matching lines (chat, kill/death, etc.) to a Discord channel.
+ * {@code [Spatial]} / {@code [Local]} lines are optional via config ({@code mirror_local_chat}).
  * RCON does not stream chat; this follows the same idea as
  * <a href="https://github.com/Theislemanager/Chatbot">Theislemanager/Chatbot</a> (log file + substring match).
  */
@@ -164,7 +165,7 @@ public final class IngameChatLogScheduler {
         database.putBotKv(KV_OFFSET, String.valueOf(offset));
 
         for (String line : toSend) {
-            String formatted = formatForDiscord(line.strip());
+            String formatted = formatForDiscord(line.strip(), config.ingameChatLogMirrorLocalChat());
             if (formatted.isBlank()) {
                 continue;
             }
@@ -232,7 +233,7 @@ public final class IngameChatLogScheduler {
         return "Spatial".equalsIgnoreCase(c) || "Local".equalsIgnoreCase(c);
     }
 
-    static String formatForDiscord(String raw) {
+    static String formatForDiscord(String raw, boolean mirrorLocalChat) {
         String t = raw;
         for (int i = 0; i < 4; i++) {
             String next = LEADING_TIMESTAMP.matcher(t).replaceFirst("").trim();
@@ -253,7 +254,7 @@ public final class IngameChatLogScheduler {
         Matcher chat = LOG_CHAT.matcher(t);
         if (chat.matches()) {
             String channel = chat.group(1).trim();
-            if (isProximityChatChannel(channel)) {
+            if (!mirrorLocalChat && isProximityChatChannel(channel)) {
                 return "";
             }
             String name = chat.group(2).trim();
