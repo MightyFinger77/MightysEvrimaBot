@@ -6,9 +6,6 @@ import net.dv8tion.jda.api.entities.MessageEmbed;
 import net.dv8tion.jda.api.entities.emoji.RichCustomEmoji;
 
 import java.awt.Color;
-import java.time.Instant;
-import java.time.ZoneId;
-import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -18,8 +15,6 @@ import java.util.regex.Pattern;
 
 public final class EcosystemEmbeds {
 
-    private static final DateTimeFormatter FMT =
-            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss z", Locale.ROOT).withZone(ZoneId.systemDefault());
     /** Already a Discord custom emoji mention — pass through unchanged. */
     private static final Pattern CUSTOM_EMOTE =
             Pattern.compile("^<a?:[a-zA-Z0-9_]{2,32}:\\d{5,30}>$");
@@ -34,11 +29,8 @@ public final class EcosystemEmbeds {
             String title,
             PopulationSnapshot snap,
             SpeciesTaxonomy taxonomy,
-            Guild guild,
-            boolean cached,
-            long cacheAgeSeconds) {
+            Guild guild) {
         int total = snap.referencePlayerTotal();
-        String hint = PlayerlistPopulationParser.formatSpeciesLineSummary(snap);
 
         StringBuilder overview = new StringBuilder();
         overview.append("🥩 **Carnivores:** ").append(snap.carnivores()).append("\n");
@@ -77,15 +69,6 @@ public final class EcosystemEmbeds {
         eb.addField("Live server population", pop.toString(), false);
         eb.addField("Overview", overview.toString(), false);
         eb.addField("Species (parsed)", speciesBlock.isBlank() ? "—" : speciesBlock, false);
-        if (!hint.isBlank()) {
-            eb.addField("Parser note", hint, false);
-        }
-
-        String footer = "Population dashboard • Updated " + FMT.format(Instant.now());
-        if (cached && cacheAgeSeconds >= 0) {
-            footer += " • cache " + cacheAgeSeconds + "s old (RCON shared)";
-        }
-        eb.setFooter(footer);
 
         return eb.build();
     }

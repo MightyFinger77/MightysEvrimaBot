@@ -71,13 +71,13 @@ public final class PopulationDashboardScheduler {
         }
 
         PopulationDashboardService.SnapshotResult res = population.snapshot(true);
+        database.recordSteamIdsFromPlayerlistRaw(res.data().rawPlayerlist());
+
         var embed = EcosystemEmbeds.build(
                 config.ecosystemTitle(),
                 res.data(),
                 population.taxonomy(),
-                ch.getGuild(),
-                false,
-                -1);
+                ch.getGuild());
 
         String kvKey = KV_MESSAGE + "_" + channelId;
         long existingMsg = database.getBotKvLong(kvKey).orElse(0L);

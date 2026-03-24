@@ -1,5 +1,6 @@
 package com.isle.evrima.bot.db;
 
+import com.isle.evrima.bot.ecosystem.PlayerlistPopulationParser;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -16,6 +17,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.OptionalLong;
+import java.util.Set;
 
 public final class Database implements AutoCloseable {
 
@@ -83,6 +85,11 @@ public final class Database implements AutoCloseable {
                     CREATE TABLE IF NOT EXISTS bot_kv (
                       k TEXT NOT NULL PRIMARY KEY,
                       v TEXT NOT NULL
+                    )""");
+            st.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS seen_server_player_steam (
+                      steam_id64 TEXT NOT NULL PRIMARY KEY,
+                      first_seen_epoch_sec INTEGER NOT NULL
                     )""");
         }
         LOG.info("Database ready at {}", filePath);
@@ -370,6 +377,44 @@ public final class Database implements AutoCloseable {
             ps.setString(1, key);
             ps.setString(2, value);
             ps.executeUpdate();
+        }
+    }
+
+    /**
+     * Records Steam IDs seen in RCON {@code playerlist} text so we can show a running "unique players seen" count.
+     * Existing rows are left unchanged ({@code INSERT OR IGNORE}).
+     */
+    public void recordSteamIdsFromPlayerlistRaw(String rawPlayerlist) throws SQLException {
+        if (rawPlayerlist == null || rawPlayerlist.isBlank()) {
+            return;
+        }
+        Set<String> ids = PlayerlistPopulationParser.distinctSteamIds(rawPlayerlist);
+        if (ids.isEmpty()) {
+            return;
+        }
+        long now = Instant.now().getEpochSecond();
+        try (Connection c = open();
+             PreparedStatement ps = c.prepareStatement("""
+                     INSERT OR IGNORE INTO seen_server_player_steam(steam_id64, first_seen_epoch_sec) VALUES(?,?)
+                     """)) {
+            for (String id : ids) {
+                ps.setString(1, id);
+                ps.setLong(2, now);
+                ps.addBatch();
+            }
+            ps.executeBatch();
+        }
+    }
+
+    public long countSeenServerSteamIds() throws SQLException {
+        try (Connection c = open();
+             PreparedStatement ps = c.prepareStatement("SELECT COUNT(*) FROM seen_server_player_steam")) {
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    return rs.getLong(1);
+                }
+                return 0L;
+            }
         }
     }
 }

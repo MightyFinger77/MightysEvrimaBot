@@ -7,6 +7,7 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -31,11 +32,34 @@ public final class BotConfig {
     private final String ecosystemTaxonomyRelative;
     private final long populationDashboardChannelId;
     private final int populationDashboardIntervalMinutes;
+    /** Empty = disabled — text channel topics updated with the same status line (see {@link #serverStatusTopicChannelIds()}). */
+    private final List<Long> serverStatusTopicChannelIds;
+    private final int serverStatusTopicIntervalMinutes;
+    /** 0 = omit “/max” in topic (show online count only). */
+    private final int serverStatusTopicMaxPlayers;
+    /** Empty = JVM default zone (e.g. host OS). */
+    private final String serverStatusTopicTimezoneId;
+    private final boolean serverStatusTopicShowUniqueSeen;
+    /** If true, append bot/JVM uptime (not the same as dedicated server uptime). */
+    private final boolean serverStatusTopicShowBridgeUptime;
+    /** Periodically set RCON {@code aidensity} from online % of {@link #adaptiveAiDensityMaxPlayers()}. */
+    private final boolean adaptiveAiDensityEnabled;
+    private final int adaptiveAiDensityIntervalMinutes;
+    /** Slot cap used only for fill %; required when adaptive AI density is enabled. */
+    private final int adaptiveAiDensityMaxPlayers;
+    private final List<AdaptiveAiDensityTier> adaptiveAiDensityTiers;
     /** 0 = disabled */
     private final int scheduledWipecorpsesIntervalMinutes;
     /** 0 = no in-game announce before wipe */
     private final int scheduledWipecorpsesWarnBeforeMinutes;
     private final String scheduledWipecorpsesAnnounceMessage;
+    /** 0 = disabled */
+    private final long ingameChatLogChannelId;
+    /** Empty = disabled (even if channel_id set) */
+    private final String ingameChatLogPathRaw;
+    private final int ingameChatLogPollSeconds;
+    /** Lines containing any of these substrings are mirrored (e.g. chat + kill/death markers). */
+    private final List<String> ingameChatLogLineContainsAny;
 
     public BotConfig(
             String discordToken,
@@ -56,9 +80,23 @@ public final class BotConfig {
             String ecosystemTaxonomyRelative,
             long populationDashboardChannelId,
             int populationDashboardIntervalMinutes,
+            List<Long> serverStatusTopicChannelIds,
+            int serverStatusTopicIntervalMinutes,
+            int serverStatusTopicMaxPlayers,
+            String serverStatusTopicTimezoneId,
+            boolean serverStatusTopicShowUniqueSeen,
+            boolean serverStatusTopicShowBridgeUptime,
+            boolean adaptiveAiDensityEnabled,
+            int adaptiveAiDensityIntervalMinutes,
+            int adaptiveAiDensityMaxPlayers,
+            List<AdaptiveAiDensityTier> adaptiveAiDensityTiers,
             int scheduledWipecorpsesIntervalMinutes,
             int scheduledWipecorpsesWarnBeforeMinutes,
-            String scheduledWipecorpsesAnnounceMessage
+            String scheduledWipecorpsesAnnounceMessage,
+            long ingameChatLogChannelId,
+            String ingameChatLogPathRaw,
+            int ingameChatLogPollSeconds,
+            List<String> ingameChatLogLineContainsAny
     ) {
         this.discordToken = discordToken;
         this.guildId = guildId;
@@ -78,9 +116,23 @@ public final class BotConfig {
         this.ecosystemTaxonomyRelative = ecosystemTaxonomyRelative;
         this.populationDashboardChannelId = populationDashboardChannelId;
         this.populationDashboardIntervalMinutes = populationDashboardIntervalMinutes;
+        this.serverStatusTopicChannelIds = List.copyOf(serverStatusTopicChannelIds);
+        this.serverStatusTopicIntervalMinutes = serverStatusTopicIntervalMinutes;
+        this.serverStatusTopicMaxPlayers = serverStatusTopicMaxPlayers;
+        this.serverStatusTopicTimezoneId = serverStatusTopicTimezoneId;
+        this.serverStatusTopicShowUniqueSeen = serverStatusTopicShowUniqueSeen;
+        this.serverStatusTopicShowBridgeUptime = serverStatusTopicShowBridgeUptime;
+        this.adaptiveAiDensityEnabled = adaptiveAiDensityEnabled;
+        this.adaptiveAiDensityIntervalMinutes = adaptiveAiDensityIntervalMinutes;
+        this.adaptiveAiDensityMaxPlayers = adaptiveAiDensityMaxPlayers;
+        this.adaptiveAiDensityTiers = List.copyOf(adaptiveAiDensityTiers);
         this.scheduledWipecorpsesIntervalMinutes = scheduledWipecorpsesIntervalMinutes;
         this.scheduledWipecorpsesWarnBeforeMinutes = scheduledWipecorpsesWarnBeforeMinutes;
         this.scheduledWipecorpsesAnnounceMessage = scheduledWipecorpsesAnnounceMessage;
+        this.ingameChatLogChannelId = ingameChatLogChannelId;
+        this.ingameChatLogPathRaw = ingameChatLogPathRaw;
+        this.ingameChatLogPollSeconds = ingameChatLogPollSeconds;
+        this.ingameChatLogLineContainsAny = List.copyOf(ingameChatLogLineContainsAny);
     }
 
     @SuppressWarnings("unchecked")
@@ -150,6 +202,35 @@ public final class BotConfig {
             popInterval = 1;
         }
 
+        Map<String, Object> statusTopic = mapOrEmpty(root.get("server_status_topic"));
+        List<Long> stChannels = parseServerStatusTopicChannelIds(statusTopic);
+        int stInterval = (int) parseLong(statusTopic.get("interval_minutes"), 5L);
+        if (stInterval < 1) {
+            stInterval = 1;
+        }
+        int stMaxPlayers = (int) parseLong(statusTopic.get("max_players"), 0L);
+        if (stMaxPlayers < 0) {
+            stMaxPlayers = 0;
+        }
+        String stTz = stringOrEmpty(statusTopic.get("timezone"));
+        boolean stUnique = parseBooleanYaml(statusTopic.get("show_unique_seen"), true);
+        boolean stBridgeUp = parseBooleanYaml(statusTopic.get("show_bridge_uptime"), false);
+
+        Map<String, Object> adaptiveAi = mapOrEmpty(root.get("adaptive_ai_density"));
+        boolean aaEnabled = parseBooleanYaml(adaptiveAi.get("enabled"), false);
+        int aaInterval = (int) parseLong(adaptiveAi.get("interval_minutes"), 4L);
+        if (aaInterval < 1) {
+            aaInterval = 1;
+        }
+        int aaMaxPlayers = (int) parseLong(adaptiveAi.get("max_players"), 0L);
+        if (aaMaxPlayers < 0) {
+            aaMaxPlayers = 0;
+        }
+        List<AdaptiveAiDensityTier> aaTiers = parseAdaptiveAiDensityTiers(adaptiveAi.get("tiers"));
+        if (aaEnabled && aaMaxPlayers <= 0) {
+            throw new IOException("adaptive_ai_density.enabled is true but max_players must be > 0 (server slot cap for fill %).");
+        }
+
         Map<String, Object> schedWipe = mapOrEmpty(root.get("scheduled_wipecorpses"));
         int wipeMin = (int) parseLong(schedWipe.get("interval_minutes"), 0L);
         if (wipeMin < 0) {
@@ -163,6 +244,18 @@ public final class BotConfig {
         if (wipeAnnounce.isBlank()) {
             wipeAnnounce = "5 minutes until corpse wipe, eat up!";
         }
+
+        Map<String, Object> chatLog = mapOrEmpty(root.get("ingame_chat_log"));
+        long chatCh = parseLong(chatLog.get("channel_id"), 0L);
+        String chatPath = stringOrEmpty(chatLog.get("path"));
+        int chatPoll = (int) parseLong(chatLog.get("poll_seconds"), 2L);
+        if (chatPoll < 1) {
+            chatPoll = 1;
+        }
+        if (chatPoll > 60) {
+            chatPoll = 60;
+        }
+        List<String> chatMarkers = parseLogLineMarkers(chatLog.get("line_contains"));
 
         return new BotConfig(
                 token,
@@ -183,10 +276,74 @@ public final class BotConfig {
                 ecoTaxonomy,
                 popChannel,
                 popInterval,
+                stChannels,
+                stInterval,
+                stMaxPlayers,
+                stTz,
+                stUnique,
+                stBridgeUp,
+                aaEnabled,
+                aaInterval,
+                aaMaxPlayers,
+                aaTiers,
                 wipeMin,
                 warnBefore,
-                wipeAnnounce
+                wipeAnnounce,
+                chatCh,
+                chatPath,
+                chatPoll,
+                chatMarkers
         );
+    }
+
+    /**
+     * {@code line_contains} may be one string or a YAML list. Empty / missing defaults to chat + kill markers
+     * (same markers as common The Isle log-to-Discord tools).
+     */
+    private static List<String> parseLogLineMarkers(Object v) {
+        if (v == null) {
+            return defaultLogLineMarkers();
+        }
+        if (v instanceof List<?> list) {
+            List<String> out = new ArrayList<>();
+            for (Object o : list) {
+                String s = stringOrEmpty(o);
+                if (!s.isBlank()) {
+                    out.add(s);
+                }
+            }
+            return out.isEmpty() ? defaultLogLineMarkers() : List.copyOf(out);
+        }
+        String single = stringOrEmpty(v);
+        if (single.isBlank()) {
+            return defaultLogLineMarkers();
+        }
+        return List.of(single);
+    }
+
+    private static List<String> defaultLogLineMarkers() {
+        return List.of("LogTheIsleChatData", "LogTheIsleKillData");
+    }
+
+    /**
+     * {@code channel_id} (single) and/or {@code channel_ids} (list); merged, order preserved, duplicates removed.
+     */
+    private static List<Long> parseServerStatusTopicChannelIds(Map<String, Object> statusTopic) {
+        LinkedHashSet<Long> set = new LinkedHashSet<>();
+        long one = parseLong(statusTopic.get("channel_id"), 0L);
+        if (one != 0L) {
+            set.add(one);
+        }
+        Object listObj = statusTopic.get("channel_ids");
+        if (listObj instanceof List<?> list) {
+            for (Object o : list) {
+                long id = parseLong(o, 0L);
+                if (id != 0L) {
+                    set.add(id);
+                }
+            }
+        }
+        return List.copyOf(set);
     }
 
     private static Map<String, Object> requireMap(Map<String, Object> root, String key) throws IOException {
@@ -220,6 +377,59 @@ public final class BotConfig {
         } catch (NumberFormatException e) {
             return defaultVal;
         }
+    }
+
+    private static boolean parseBooleanYaml(Object v, boolean defaultVal) {
+        if (v == null) {
+            return defaultVal;
+        }
+        if (v instanceof Boolean b) {
+            return b;
+        }
+        String s = String.valueOf(v).trim();
+        if (s.isEmpty()) {
+            return defaultVal;
+        }
+        return Boolean.parseBoolean(s);
+    }
+
+    private static double parseDoubleYaml(Object v, double defaultVal) {
+        if (v == null) {
+            return defaultVal;
+        }
+        if (v instanceof Number n) {
+            return n.doubleValue();
+        }
+        try {
+            return Double.parseDouble(String.valueOf(v).trim());
+        } catch (NumberFormatException e) {
+            return defaultVal;
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<AdaptiveAiDensityTier> parseAdaptiveAiDensityTiers(Object tiersObj) throws IOException {
+        if (!(tiersObj instanceof List<?> list) || list.isEmpty()) {
+            return AdaptiveAiDensityTier.defaultTiers();
+        }
+        List<AdaptiveAiDensityTier> out = new ArrayList<>();
+        int idx = 0;
+        for (Object row : list) {
+            idx++;
+            if (!(row instanceof Map)) {
+                throw new IOException("adaptive_ai_density.tiers[" + idx + "] must be a map (min_percent, max_percent, density)");
+            }
+            Map<String, Object> map = (Map<String, Object>) row;
+            int min = (int) parseLong(map.get("min_percent"), -1L);
+            int max = (int) parseLong(map.get("max_percent"), -1L);
+            double density = parseDoubleYaml(map.get("density"), Double.NaN);
+            if (min < 0 || max < 0 || min > 100 || max > 100 || min > max
+                    || Double.isNaN(density) || density < 0 || Double.isInfinite(density)) {
+                throw new IOException("adaptive_ai_density.tiers[" + idx + "] invalid (need 0<=min<=max<=100, density>=0): " + row);
+            }
+            out.add(new AdaptiveAiDensityTier(min, max, density));
+        }
+        return AdaptiveAiDensityTier.sortedCopy(out);
     }
 
     private static List<Long> parseIdList(Object v) {
@@ -316,6 +526,54 @@ public final class BotConfig {
     }
 
     /**
+     * Text channels whose topics receive the same RCON status line. Empty disables.
+     * YAML: {@code channel_id} (one id) and/or {@code channel_ids} (list); both may be set and are merged.
+     */
+    public List<Long> serverStatusTopicChannelIds() {
+        return serverStatusTopicChannelIds;
+    }
+
+    public int serverStatusTopicIntervalMinutes() {
+        return serverStatusTopicIntervalMinutes;
+    }
+
+    /** Server slot cap for “N/max” in the topic; {@code 0} shows online count only. */
+    public int serverStatusTopicMaxPlayers() {
+        return serverStatusTopicMaxPlayers;
+    }
+
+    /** IANA timezone id (e.g. {@code America/Chicago}) for “Last update”; empty = default zone. */
+    public String serverStatusTopicTimezoneId() {
+        return serverStatusTopicTimezoneId;
+    }
+
+    public boolean serverStatusTopicShowUniqueSeen() {
+        return serverStatusTopicShowUniqueSeen;
+    }
+
+    public boolean serverStatusTopicShowBridgeUptime() {
+        return serverStatusTopicShowBridgeUptime;
+    }
+
+    public boolean adaptiveAiDensityEnabled() {
+        return adaptiveAiDensityEnabled;
+    }
+
+    public int adaptiveAiDensityIntervalMinutes() {
+        return adaptiveAiDensityIntervalMinutes;
+    }
+
+    /** Server slot cap for population fill % (must be &gt; 0 when feature is enabled). */
+    public int adaptiveAiDensityMaxPlayers() {
+        return adaptiveAiDensityMaxPlayers;
+    }
+
+    /** Sorted by {@code min_percent}. */
+    public List<AdaptiveAiDensityTier> adaptiveAiDensityTiers() {
+        return adaptiveAiDensityTiers;
+    }
+
+    /**
      * Minutes between automatic RCON {@code wipecorpses}; {@code 0} disables the scheduler.
      */
     public int scheduledWipecorpsesIntervalMinutes() {
@@ -331,5 +589,34 @@ public final class BotConfig {
 
     public String scheduledWipecorpsesAnnounceMessage() {
         return scheduledWipecorpsesAnnounceMessage;
+    }
+
+    /** Discord channel for mirrored in-game log lines; {@code 0} disables. */
+    public long ingameChatLogChannelId() {
+        return ingameChatLogChannelId;
+    }
+
+    /**
+     * Absolute or relative path to the dedicated server log (e.g. {@code TheIsle.log}).
+     * Empty disables mirroring even if {@link #ingameChatLogChannelId()} is set.
+     */
+    public Path ingameChatLogPath() {
+        if (ingameChatLogPathRaw.isBlank()) {
+            return null;
+        }
+        return Path.of(ingameChatLogPathRaw);
+    }
+
+    /** How often to poll the log file (1–60 seconds). */
+    public int ingameChatLogPollSeconds() {
+        return ingameChatLogPollSeconds;
+    }
+
+    /**
+     * Log lines containing <b>any</b> of these substrings are posted. Defaults include chat and kill/death
+     * ({@code LogTheIsleChatData}, {@code LogTheIsleKillData}). Add more (e.g. a hunger tag from your log) in config.
+     */
+    public List<String> ingameChatLogLineContainsAny() {
+        return ingameChatLogLineContainsAny;
     }
 }

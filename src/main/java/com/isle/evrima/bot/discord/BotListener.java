@@ -429,9 +429,7 @@ public final class BotListener extends ListenerAdapter {
                         config.ecosystemTitle(),
                         res.data(),
                         tax,
-                        event.getGuild(),
-                        res.fromCache(),
-                        res.cacheAgeSeconds());
+                        event.getGuild());
                 hook.editOriginalEmbeds(embed).queue(
                         null,
                         err -> LOG.warn("ecosystem dashboard editOriginalEmbeds: {}", err.toString()));

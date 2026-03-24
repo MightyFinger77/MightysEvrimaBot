@@ -4,10 +4,13 @@ import com.isle.evrima.bot.config.BotConfig;
 import com.isle.evrima.bot.db.Database;
 import com.isle.evrima.bot.discord.BotListener;
 import com.isle.evrima.bot.discord.CommandRegistry;
+import com.isle.evrima.bot.discord.IngameChatLogScheduler;
 import com.isle.evrima.bot.discord.PopulationDashboardScheduler;
+import com.isle.evrima.bot.discord.ServerStatusTopicScheduler;
 import com.isle.evrima.bot.ecosystem.PopulationDashboardService;
 import com.isle.evrima.bot.ecosystem.SpeciesTaxonomy;
 import com.isle.evrima.bot.rcon.RconService;
+import com.isle.evrima.bot.schedule.AdaptiveAiDensityScheduler;
 import com.isle.evrima.bot.schedule.ScheduledCorpseWipeScheduler;
 import com.isle.evrima.bot.security.PermissionService;
 import net.dv8tion.jda.api.JDA;
@@ -55,6 +58,9 @@ public final class EvrimaServerBotApp {
         jda.awaitReady();
         registerSlashCommands(jda, config);
         new PopulationDashboardScheduler(config, database, population).start(jda);
+        new ServerStatusTopicScheduler(config, database, population).start(jda);
+        new IngameChatLogScheduler(config, database).start(jda);
+        new AdaptiveAiDensityScheduler(config, rcon, population, database).start();
         new ScheduledCorpseWipeScheduler(config, rcon).start();
         LOG.info("EvrimaServerBot logged in as {}", jda.getSelfUser().getName());
     }

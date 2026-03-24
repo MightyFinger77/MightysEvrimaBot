@@ -3,8 +3,10 @@ package com.isle.evrima.bot.ecosystem;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -280,6 +282,19 @@ public final class PlayerlistPopulationParser {
             n++;
         }
         return n;
+    }
+
+    /** Distinct SteamID64 values appearing in raw RCON text (e.g. {@code playerlist}). */
+    public static Set<String> distinctSteamIds(String raw) {
+        LinkedHashSet<String> out = new LinkedHashSet<>();
+        if (raw == null || raw.isEmpty()) {
+            return out;
+        }
+        Matcher m = STEAM_ID64.matcher(raw);
+        while (m.find()) {
+            out.add(m.group());
+        }
+        return out;
     }
 
     private static int extractDeclaredPlayerCount(String raw) {
