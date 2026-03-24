@@ -16,6 +16,8 @@ Self-hosted **Discord** companion for **The Isle Evrima** dedicated servers: Ste
 8. [Slash commands reference](#slash-commands-reference)
 9. [Troubleshooting](#troubleshooting)
 10. [Security notes](#security-notes)
+11. [License / attribution](#license--attribution)
+12. [Roadmap / todo](#roadmap--todo)
 
 ---
 
@@ -24,6 +26,7 @@ Self-hosted **Discord** companion for **The Isle Evrima** dedicated servers: Ste
 - A **Discord server** where you can manage roles and invite bots.
 - A **Discord Application** + **Bot** user (see below).
 - An **Evrima dedicated server** with **RCON enabled** and a known password/port.
+- A machine to run the bot: **Java 17+** (JDK for [building](#build); JRE is enough to run the shaded JAR).
 - (Optional) A fixed **guild ID** so slash commands update in seconds during setup instead of using global registration delay.
 
 ---
@@ -73,7 +76,7 @@ Open the generated URL, pick your server, authorize.
 
 ### 4. Role IDs for staff
 
-The bot does **not** use Discord’s permission system for RCON—it uses **role IDs** you list in `config.yml`:
+The bot does **not** use Discord’s permission system for RCON—it uses **role IDs** you list in your config file (usually **`configs/config.yml`**):
 
 - `roles.moderator` — `/evrima-mod …`
 - `roles.admin` — `/evrima-admin …` (RCON + `/evrima-admin give` for points)
@@ -103,13 +106,13 @@ Enable RCON in your dedicated server config (hosting docs usually mention `Game.
 ## Configuration
 
 1. **Default layout:** run the JAR with **no arguments** from your bot folder. It looks for an existing **`configs/config.yml`** first, then **`config/config.yml`** (singular folder). If neither exists, it creates **`configs/`** and writes only **missing** files: **`config.yml`** (from bundled `config.example.yml`) and **`species-taxonomy.yml`**. It never overwrites existing YAMLs. Edit your config and set token/RCON/etc. You can pass a custom path as the first argument (see [Run](#run)). If a mistaken first run created an empty **`configs/`** with defaults while your real files are under **`config/`**, delete the **`configs/`** folder (or the stray files inside it) so the bot picks **`config/`**.
-2. Fill in at least:
+2. Edit **`config.yml`** (after first-run extraction, typically **`configs/config.yml`**) and fill in at least:
    - `discord.token` **or** environment variable `DISCORD_TOKEN`
    - `discord.guild_id` (recommended: your server’s ID) or `0` for global commands only
    - `discord.roles.*` with real role IDs
    - `rcon.host`, `rcon.port`, `rcon.password`
 
-Paths like `database.path` are relative to the **process working directory** unless you use an absolute path.
+Paths like `database.path` are relative to the **process working directory** (the folder you `cd` into before `java -jar`) unless you use an absolute path.
 
 **Ecosystem / population:** optional `population_dashboard.channel_id` (text channel) + `interval_minutes` posts one embed and **edits** it on a schedule; the message ID is stored in SQLite (`bot_kv`). For `/evrima ecosystem dashboard`, adjust `ecosystem.cache_ttl_seconds` and `ecosystem.title`. **Species matching** always uses **`species-taxonomy.yml` in the same directory as `config.yml`** (e.g. `configs/species-taxonomy.yml`); the bot extracts a default from the JAR if that file is missing. The parser also handles **one-line / pipe-separated** lists, counts **SteamID64** occurrences, phrases like **“119 players”**, and a **greedy species scan** when the server does not send one player per line.
 
@@ -199,7 +202,7 @@ Import the folder as a **Maven** project (open `pom.xml` or the root directory).
 
 ## Run
 
-**Working directory:** Run from the folder where you want **`configs/`** and **`data/`** to live (default config is **`configs/config.yml`**). Or pass the config path as the first argument.
+**Working directory:** Run from the folder where you want **`configs/`** (or **`config/`**) and **`data/`** to live. With **no arguments**, the bot resolves **`configs/config.yml`** or **`config/config.yml`** (see [Configuration](#configuration)). To use a config somewhere else, pass the **full path to `config.yml`** as the first argument.
 
 **Helper scripts** (same folder as the shaded JAR): **Windows** → `start-bot.bat`; **Linux / macOS** → `start-bot.sh` (`chmod +x start-bot.sh` once, then `./start-bot.sh`). Both check that the fat JAR exists, warn if the file is too small, and add `--enable-native-access=ALL-UNNAMED` when your JDK supports it.
 
@@ -219,27 +222,32 @@ java -jar evrima-server-bot-1.0.1.jar
 java --enable-native-access=ALL-UNNAMED -jar evrima-server-bot-1.0.1.jar
 ```
 
-With an explicit config path:
+With an explicit **`config.yml`** path (taxonomy file is expected **in the same folder**; missing **`species-taxonomy.yml`** is created from the JAR if absent):
 
 ```bash
-java -jar evrima-server-bot-1.0.1.jar D:\configs\evrima-bot-config.yml
+java -jar evrima-server-bot-1.0.1.jar /opt/evrima-bot/configs/config.yml
 ```
 
-On first start the bot will:
+### On first start (and every start)
 
-1. Create/migrate the SQLite file (see `database.path`).
-2. Log in to Discord.
-3. Register slash commands (guild commands if `guild_id` is set and valid; otherwise **global** commands—Discord can take up to about an hour to show new global commands).
+Order matters for troubleshooting logs.
 
-**Tip:** Set `discord.guild_id` to your Discord server’s numeric ID so commands register **on that guild** and usually appear **within seconds** after restart. With `guild_id: 0`, the log line *“Registered 1 global slash commands”* is expected; wait or switch to a guild ID.
+1. **Config path** — With no CLI args: use existing **`configs/config.yml`** or **`config/config.yml`**, or create **`configs/`** and write **missing** defaults (**`config.yml`** from bundled `config.example.yml`, **`species-taxonomy.yml`** from the JAR). Existing files are never overwritten. With a CLI path: that file is used; **`species-taxonomy.yml`** is still ensured **next to** that `config.yml` if missing.
+2. **Load `config.yml`** — Validates token (env or file), RCON password, etc. Fix errors and restart if startup throws.
+3. **SQLite** — Creates or migrates the database file (see `database.path`, usually under **`data/`** relative to the working directory).
+4. **Discord** — Connects and caches members (Server Members intent).
+5. **Slash commands** — Registers command **roots** on the guild when **`discord.guild_id`** is set and the bot is in that server; otherwise registers **globally** (Discord can take up to about an hour for new global commands to appear everywhere).
+6. **Background tasks** — Starts schedulers you enabled in config (population dashboard embed, channel topics, in-game log tail, adaptive AI density, species population control, scheduled corpse wipes, etc.).
 
-You should see a log line like: `EvrimaServerBot logged in as …`
+**Tip:** Set `discord.guild_id` to your Discord server’s numeric ID so commands register **on that guild** and usually appear **within seconds** after restart. With `guild_id: 0`, expect a log line like **`Registered N global slash command roots`** (N is the number of top-level slash roots, e.g. `/evrima`, `/evrima-admin`, …); global propagation can be slow—switch to a real guild ID for faster iteration.
+
+You should see: **`EvrimaServerBot logged in as …`** (and earlier, **`Config directory: …`** when using the default no-args layout).
 
 ---
 
 ## Slash commands reference
 
-Commands are split into **four roots** so you can hide staff trees in **Server Settings → Integrations → [bot] → Manage** (Command Permissions v2). The bot still **checks** `config.yml` role IDs at runtime.
+Commands are split into **four roots** so you can hide staff trees in **Server Settings → Integrations → [bot] → Manage** (Command Permissions v2). The bot still **checks** role IDs from your config (e.g. **`configs/config.yml`**) at runtime.
 
 ### `/evrima` (everyone)
 
@@ -279,9 +287,9 @@ Commands are split into **four roots** so you can hide staff trees in **Server S
 | `ai-stop-spawns` | RCON **`aidensity 0`** only — slows/stops **new** AI spawns. Does **not** kill live AI, wipe corpses, or toggle AI. |
 | `ai-wipe` | **Informational only** — explains that **The Isle Evrima**’s documented **binary RCON** verbs (`wipecorpses`, `toggleai`, `aidensity`, …) **do not** include clearing **living** wild AI; use **Insert → Admin → Wipe AI** in-game. Does **not** send RCON `custom` / free-text execs. |
 | `ai-learning` | RCON `toggleailearning` if your build supports it. |
-| `species-control` | Runtime toggle for dynamic species caps: `mode=on|off|status` (persists in SQLite `bot_kv`, survives restart). |
-| `species-cap-set` | Runtime cap override for one species (`species` + `cap`, where `0` disables that species cap). |
-| `species-cap-clear` | Remove runtime cap override for one species and revert to `config.yml` value. |
+| `species-control` | `mode=on|off|status` — toggle species cap scheduler or show **status** (enabled, interval, unlock offset, **list of capped species and values**, overrides marked) (persists in SQLite `bot_kv`). |
+| `species-cap-set` | Runtime cap override for one species (`species` + `cap`; `0` = unlimited / unmanaged for that species). |
+| `species-cap-clear` | Remove runtime cap override for one species and revert to the value from config. |
 | `species-cap-list` | Show effective caps and mark which entries are runtime overrides. |
 | `corpse-wipe-control` | Runtime toggle/status for scheduled corpse wipes: `mode=on|off|dynamic|status` (persisted). |
 | `corpse-wipe-set` | Set runtime wipe value by `key` (`interval_minutes`, `warn_before_minutes`, `announce_message`, `dynamic_max_players`, `dynamic_enable_percent`, `dynamic_disable_grace_seconds`) and `value`. |
@@ -311,7 +319,7 @@ Commands are split into **four roots** so you can hide staff trees in **Server S
 
 | Symptom | Things to check |
 |---------|------------------|
-| **Bot offline / login fails** | Token correct? `DISCORD_TOKEN` vs `config.yml`. Bot not disabled in portal. |
+| **Bot offline / login fails** | Token correct? `DISCORD_TOKEN` vs `configs/config.yml` (or your chosen path). Bot not disabled in portal. |
 | **Slash commands missing** | If `guild_id` is `0`, wait for global propagation (often up to ~1 hour) or set real guild ID and restart. Re-invite with `applications.commands` scope. |
 | **`restricted method` / SQLite `System::load` warnings (JDK 24+)** | Use `start-bot.bat` / `start-bot.sh`, or add `--enable-native-access=ALL-UNNAMED` before `-jar`. Harmless if ignored today; future JDKs may require the flag. |
 | **`10062` / “The application did not respond”** | Discord allows **3 seconds** to acknowledge a slash command. RCON often takes longer. The bot now **defers** (`…is thinking…`) for `/evrima-admin`, `/evrima-mod` (whois/timeout), `/evrima-admin give`, and `/evrima link start`. If it still happens, ensure **only one** JVM/process uses this bot token. |
@@ -329,7 +337,7 @@ Commands are split into **four roots** so you can hide staff trees in **Server S
 
 ## Security notes
 
-- **Never commit** `config.yml` with a live token (this repo’s `.gitignore` ignores it).
+- **Never commit** `config.yml` (e.g. under **`configs/`**) with a live token (this repo’s `.gitignore` ignores common names).
 - Prefer **`DISCORD_TOKEN`** on the host over a token in a file.
 - RCON password is effectively **root on the game server**—treat like a secret.
 - Anyone with an **admin role ID** in config can run destructive RCON; keep those roles tight.
@@ -338,7 +346,7 @@ Commands are split into **four roots** so you can hide staff trees in **Server S
 
 ## License / attribution
 
-Independent project; not affiliated with PrimalCore or The Isle. Extend and run on your own infrastructure.
+Independent project; not affiliated with The Isle. Extend and run on your own infrastructure.
 
 ---
 
