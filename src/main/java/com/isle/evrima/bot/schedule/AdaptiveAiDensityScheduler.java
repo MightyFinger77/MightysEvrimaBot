@@ -34,17 +34,20 @@ public final class AdaptiveAiDensityScheduler {
     private final RconService rcon;
     private final PopulationDashboardService population;
     private final Database database;
+    private final RconWriteGuard rconGuard;
     private final AtomicBoolean warnedNoTier = new AtomicBoolean(false);
 
     public AdaptiveAiDensityScheduler(
             LiveBotConfig live,
             RconService rcon,
             PopulationDashboardService population,
-            Database database) {
+            Database database,
+            RconWriteGuard rconGuard) {
         this.live = Objects.requireNonNull(live, "live");
         this.rcon = Objects.requireNonNull(rcon, "rcon");
         this.population = Objects.requireNonNull(population, "population");
         this.database = Objects.requireNonNull(database, "database");
+        this.rconGuard = Objects.requireNonNull(rconGuard, "rconGuard");
     }
 
     public void start() {
@@ -72,8 +75,10 @@ public final class AdaptiveAiDensityScheduler {
         try {
             runOnce();
         } catch (SQLException | IOException e) {
+            rconGuard.observeFailure();
             LOG.warn("adaptive_ai_density tick failed: {}", e.toString());
         } catch (Exception e) {
+            rconGuard.observeFailure();
             LOG.warn("adaptive_ai_density tick failed: {}", e.toString());
         }
     }
@@ -90,6 +95,7 @@ public final class AdaptiveAiDensityScheduler {
 
         PopulationDashboardService.SnapshotResult res = population.snapshot(true);
         int players = Math.max(0, res.data().referencePlayerTotal());
+        rconGuard.observeHealthy();
         int fillPct = (int) Math.min(100L, Math.floor(100.0 * (double) players / (double) maxPlayers));
 
         List<AdaptiveAiDensityTier> tiers = config.adaptiveAiDensityTiers();
@@ -116,6 +122,9 @@ public final class AdaptiveAiDensityScheduler {
             }
         }
 
+        if (!rconGuard.allowSchedulerWrite("adaptive_ai_density", players)) {
+            return;
+        }
         rcon.run(EvrimaRcon.lineAidensity(target));
         database.putBotKv(KV_LAST_DENSITY, BigDecimal.valueOf(target).stripTrailingZeros().toPlainString());
         LOG.info(

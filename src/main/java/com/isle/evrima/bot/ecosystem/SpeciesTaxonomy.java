@@ -13,6 +13,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
@@ -182,6 +183,74 @@ public final class SpeciesTaxonomy {
             }
         }
         return null;
+    }
+
+    /**
+     * For RCON blobs split per SteamID64: {@link #matchLine(String)} picks the <i>longest</i> key that appears
+     * <i>anywhere</i> in the slice. Neighboring players’ species often sit in the same 768-byte window, so
+     * {@code Tyrannosaurus} (12 chars) can beat {@code Triceratops} (11) even for the trike player. This method
+     * scores every key occurrence and returns the entry whose match is <i>closest</i> to the center of that player’s
+     * SteamID64. Ties prefer the match starting nearest the ID, then the longer key.
+     */
+    public Entry matchClosestToSteamId(String slice, int steamIdStartInSlice, int steamIdLength) {
+        if (slice == null || slice.isBlank()) {
+            return null;
+        }
+        int len = slice.length();
+        if (steamIdStartInSlice < 0 || steamIdStartInSlice > len) {
+            return null;
+        }
+        int idLen = Math.max(1, steamIdLength);
+        int anchorCenter = Math.min(len, steamIdStartInSlice + idLen / 2);
+
+        String hay = slice.toLowerCase(Locale.ROOT);
+        Entry best = null;
+        int bestDist = Integer.MAX_VALUE;
+        int bestEdge = Integer.MAX_VALUE;
+        int bestKeyLen = -1;
+
+        for (KeyRef ref : sortedKeys) {
+            for (int idx : occurrencesOfKey(hay, ref.keyLower())) {
+                int matchCenter = idx + ref.keyLength() / 2;
+                int dist = Math.abs(matchCenter - anchorCenter);
+                int edgeProximity = Math.abs(idx - steamIdStartInSlice);
+                if (dist < bestDist
+                        || (dist == bestDist && edgeProximity < bestEdge)
+                        || (dist == bestDist && edgeProximity == bestEdge && ref.keyLength() > bestKeyLen)) {
+                    bestDist = dist;
+                    bestEdge = edgeProximity;
+                    bestKeyLen = ref.keyLength();
+                    best = ref.entry();
+                }
+            }
+        }
+        return best;
+    }
+
+    /** All start indices where {@code keyLower} matches {@code hayLower}, using the same rules as {@link #matches}. */
+    private static List<Integer> occurrencesOfKey(String hayLower, String keyLower) {
+        List<Integer> out = new ArrayList<>();
+        if (keyLower.isEmpty()) {
+            return out;
+        }
+        if (keyLower.length() >= 5) {
+            int from = 0;
+            while (from <= hayLower.length() - keyLower.length()) {
+                int i = hayLower.indexOf(keyLower, from);
+                if (i < 0) {
+                    break;
+                }
+                out.add(i);
+                from = i + 1;
+            }
+            return out;
+        }
+        Pattern p = Pattern.compile("(?<![a-z0-9])" + Pattern.quote(keyLower) + "(?![a-z0-9])");
+        Matcher m = p.matcher(hayLower);
+        while (m.find()) {
+            out.add(m.start());
+        }
+        return out;
     }
 
     private static boolean matches(String hayLower, String keyLower) {

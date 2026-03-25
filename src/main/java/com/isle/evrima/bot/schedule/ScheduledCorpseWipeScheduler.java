@@ -27,6 +27,7 @@ public final class ScheduledCorpseWipeScheduler {
     private final LiveBotConfig live;
     private final RconService rcon;
     private final PopulationDashboardService population;
+    private final RconWriteGuard rconGuard;
     private final AtomicBoolean announcedThisCycle = new AtomicBoolean(false);
     /** In {@code dynamic} mode: after pre-wipe {@code announce} succeeds, finish this wipe even if population drops below threshold. */
     private final AtomicBoolean pendingWipeCommittedDynamic = new AtomicBoolean(false);
@@ -35,10 +36,15 @@ public final class ScheduledCorpseWipeScheduler {
     private final AtomicLong dynamicAboveSinceEpochSec = new AtomicLong(0L);
     private final AtomicLong dynamicBelowSinceEpochSec = new AtomicLong(0L);
 
-    public ScheduledCorpseWipeScheduler(LiveBotConfig live, RconService rcon, PopulationDashboardService population) {
+    public ScheduledCorpseWipeScheduler(
+            LiveBotConfig live,
+            RconService rcon,
+            PopulationDashboardService population,
+            RconWriteGuard rconGuard) {
         this.live = Objects.requireNonNull(live, "live");
         this.rcon = Objects.requireNonNull(rcon, "rcon");
         this.population = Objects.requireNonNull(population, "population");
+        this.rconGuard = Objects.requireNonNull(rconGuard, "rconGuard");
     }
 
     private BotConfig cfg() {
@@ -183,6 +189,11 @@ public final class ScheduledCorpseWipeScheduler {
         }
 
         try {
+            int players = Math.max(0, population.snapshot(false).data().referencePlayerTotal());
+            rconGuard.observeHealthy();
+            if (!rconGuard.allowSchedulerWrite("scheduled_wipecorpses", players)) {
+                return;
+            }
             if (useWarning && !announcedThisCycle.get()) {
                 long announceAt = wipeAt - warnMin * 60L;
                 if (now >= announceAt) {
@@ -205,8 +216,10 @@ public final class ScheduledCorpseWipeScheduler {
                 resetCycleFromNow();
             }
         } catch (IOException e) {
+            rconGuard.observeFailure();
             LOG.warn("Scheduled wipecorpses failed: {}", e.toString());
         } catch (Exception e) {
+            rconGuard.observeFailure();
             LOG.warn("Scheduled wipecorpses error: {}", e.toString());
         }
     }

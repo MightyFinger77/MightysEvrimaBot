@@ -1,6 +1,7 @@
 # Kill / death lines for Discord log mirror (EvrimaServerBot 1.0.2+).
 # Placeholders (Discord markdown-safe, already escaped by the bot):
 #   PvP: {killer} {victim} {killerSpecies} {killerSex} {victimSpecies} {victimGender}
+#   AI kill flavor lines omit sex/gender for wildlife (bundled quips use species only).
 #   Natural: {victim} {species} {cause} — optional {sex} if you add custom lines (bundled quips omit sex).
 # Add species keys in lowercase or any case — they are matched case-insensitively.
 
@@ -28,60 +29,60 @@ generic_pvp_quips:
 
 # AI kills: ~30% of the time the bot picks from here even when ai_pvp_quips has a species/default match (see KillFlavorPack).
 generic_ai_pvp_quips:
-  - "Wild **{killerSpecies}** ({killerSex}) said absolutely not to **{victim}** ({victimSpecies})."
-  - "**{victim}** ({victimSpecies}) lost a debate with a **{killerSpecies}** ({killerSex}). Nature voted."
-  - "NPC moment: **{killerSpecies}** ({killerSex}) ended **{victim}** ({victimSpecies})."
+  - "Wild **{killerSpecies}** said absolutely not to **{victim}** ({victimSpecies})."
+  - "**{victim}** ({victimSpecies}) lost a debate with a **{killerSpecies}**. Nature voted."
+  - "NPC moment: **{killerSpecies}** ended **{victim}** ({victimSpecies})."
   - "The food chain wrote itself — **{killerSpecies}** vs **{victim}** ({victimSpecies})."
-  - "Ambient **{killerSpecies}** ({killerSex}) rolled a crit. **{victim}** ({victimSpecies}) fumbled."
-  - "**{victim}** ({victimSpecies}) tried to 1v1 the tutorial mob (**{killerSpecies}**, {killerSex}). Spoilers: lost."
-  - "The **{killerSpecies}** ({killerSex}) was just vibing. **{victim}** ({victimSpecies}) walked into the vibe."
-  - "Speedrun strats: **{killerSpecies}** ({killerSex}) any% **{victim}** ({victimSpecies})."
-  - "**{victim}** ({victimSpecies}) forgot AI aggro range exists. **{killerSpecies}** ({killerSex}) reminded them."
-  - "Hardcore wildlife DLC: **{killerSpecies}** ({killerSex}) vs **{victim}** ({victimSpecies}) — wildlife wins."
-  - "**{killerSpecies}** ({killerSex}) didn't clock in for drama but still filed a complaint against **{victim}** ({victimSpecies})."
-  - "Local **{killerSpecies}** ({killerSex}) delivers express service to **{victim}** ({victimSpecies})."
-  - "**{victim}** ({victimSpecies}) picked the wrong patch of grass. **{killerSpecies}** ({killerSex}) was home."
-  - "The island's **{killerSpecies}** ({killerSex}) said this is my swamp now, **{victim}** ({victimSpecies})."
-  - "**{victim}** ({victimSpecies}) got ratio'd by a **{killerSpecies}** ({killerSex})."
-  - "Skill issue (wildlife edition): **{victim}** ({victimSpecies}) vs **{killerSpecies}** ({killerSex})."
+  - "Ambient **{killerSpecies}** rolled a crit. **{victim}** ({victimSpecies}) fumbled."
+  - "**{victim}** ({victimSpecies}) tried to 1v1 the tutorial mob (**{killerSpecies}**). Spoilers: lost."
+  - "The **{killerSpecies}** was just vibing. **{victim}** ({victimSpecies}) walked into the vibe."
+  - "Speedrun strats: **{killerSpecies}** any% **{victim}** ({victimSpecies})."
+  - "**{victim}** ({victimSpecies}) forgot AI aggro range exists. **{killerSpecies}** reminded them."
+  - "Hardcore wildlife DLC: **{killerSpecies}** vs **{victim}** ({victimSpecies}) — wildlife wins."
+  - "**{killerSpecies}** didn't clock in for drama but still filed a complaint against **{victim}** ({victimSpecies})."
+  - "Local **{killerSpecies}** delivers express service to **{victim}** ({victimSpecies})."
+  - "**{victim}** ({victimSpecies}) picked the wrong patch of grass. **{killerSpecies}** was home."
+  - "The island's **{killerSpecies}** said this is my swamp now, **{victim}** ({victimSpecies})."
+  - "**{victim}** ({victimSpecies}) got ratio'd by a **{killerSpecies}**."
+  - "Skill issue (wildlife edition): **{victim}** ({victimSpecies}) vs **{killerSpecies}**."
 
 ai_pvp_quips:
   default:
-    - "A **{killerSpecies}** ({killerSex}) humble-bragged over **{victim}** ({victimSpecies}, {victimGender})."
-    - "**{victim}** ({victimSpecies}) became a statistic courtesy of **{killerSpecies}** ({killerSex})."
-    - "The **{killerSpecies}** ({killerSex}) was off-script; **{victim}** ({victimSpecies}) was the casualty."
-    - "**{victim}** ({victimSpecies}) — eliminated by wildlife MVP **{killerSpecies}** ({killerSex})."
-    - "Unpaid intern **{killerSpecies}** ({killerSex}) still outperformed **{victim}** ({victimSpecies})."
-    - "**{killerSpecies}** ({killerSex}) said skill issue. **{victim}** ({victimSpecies}) could not dispute."
-    - "Patch notes: **{killerSpecies}** ({killerSex}) buffed. **{victim}** ({victimSpecies}) nerfed into the dirt."
-    - "**{victim}** ({victimSpecies}) got the full **{killerSpecies}** ({killerSex}) encounter. No skips."
-    - "RNGesus rolled **{killerSpecies}** ({killerSex}). **{victim}** ({victimSpecies}) crit failed IRL."
-    - "A wild **{killerSpecies}** ({killerSex}) appeared! **{victim}** ({victimSpecies}) had no repels."
+    - "A **{killerSpecies}** humble-bragged over **{victim}** ({victimSpecies})."
+    - "**{victim}** ({victimSpecies}) became a statistic courtesy of **{killerSpecies}**."
+    - "The **{killerSpecies}** was off-script; **{victim}** ({victimSpecies}) was the casualty."
+    - "**{victim}** ({victimSpecies}) — eliminated by wildlife MVP **{killerSpecies}**."
+    - "Unpaid intern **{killerSpecies}** still outperformed **{victim}** ({victimSpecies})."
+    - "**{killerSpecies}** said skill issue. **{victim}** ({victimSpecies}) could not dispute."
+    - "Patch notes: **{killerSpecies}** buffed. **{victim}** ({victimSpecies}) nerfed into the dirt."
+    - "**{victim}** ({victimSpecies}) got the full **{killerSpecies}** encounter. No skips."
+    - "RNGesus rolled **{killerSpecies}**. **{victim}** ({victimSpecies}) crit failed IRL."
+    - "A wild **{killerSpecies}** appeared! **{victim}** ({victimSpecies}) had no repels."
   boar:
-    - "A tusky **Boar** ({killerSex}) yeeted **{victim}** ({victimSpecies}) back to spawn logic."
+    - "A tusky **Boar** yeeted **{victim}** ({victimSpecies}) back to spawn logic."
     - "**{victim}** ({victimSpecies}) got the boar experience. Zero stars."
-    - "Boar ({killerSex}) said oink oink obliterate — **{victim}** ({victimSpecies}) listened."
-    - "**{victim}** ({victimSpecies}) underestimated pork power. The **Boar** ({killerSex}) did not."
-    - "Tactical **Boar** ({killerSex}) flanked **{victim}** ({victimSpecies}). Classic."
-    - "**{victim}** ({victimSpecies}) became a speed bump for a **Boar** ({killerSex}) on a mission."
+    - "Boar said oink oink obliterate — **{victim}** ({victimSpecies}) listened."
+    - "**{victim}** ({victimSpecies}) underestimated pork power. The **Boar** did not."
+    - "Tactical **Boar** flanked **{victim}** ({victimSpecies}). Classic."
+    - "**{victim}** ({victimSpecies}) became a speed bump for a **Boar** on a mission."
   deer:
-    - "Plot twist: **Deer** ({killerSex}) won. **{victim}** ({victimSpecies}) did not read the patch notes."
-    - "Bambi energy: **Deer** ({killerSex}) ended **{victim}** ({victimSpecies}). No refunds."
-    - "**{victim}** ({victimSpecies}) got clapped by a **Deer** ({killerSex}). The forest is watching."
-    - "The **Deer** ({killerSex}) was not in a documentary mood — **{victim}** ({victimSpecies}) paid the price."
-    - "**Deer** ({killerSex}) hoof-check: **{victim}** ({victimSpecies}) failed."
+    - "Plot twist: **Deer** won. **{victim}** ({victimSpecies}) did not read the patch notes."
+    - "Bambi energy: **Deer** ended **{victim}** ({victimSpecies}). No refunds."
+    - "**{victim}** ({victimSpecies}) got clapped by a **Deer**. The forest is watching."
+    - "The **Deer** was not in a documentary mood — **{victim}** ({victimSpecies}) paid the price."
+    - "**Deer** hoof-check: **{victim}** ({victimSpecies}) failed."
   rabbit:
-    - "Lagomorph violence: **Rabbit** ({killerSex}) vs **{victim}** ({victimSpecies}) — bunny wins."
-    - "**{victim}** ({victimSpecies}) lost to a **Rabbit** ({killerSex}). That's going in the highlight reel."
+    - "Lagomorph violence: **Rabbit** vs **{victim}** ({victimSpecies}) — bunny wins."
+    - "**{victim}** ({victimSpecies}) lost to a **Rabbit**. That's going in the highlight reel."
   compy:
-    - "Death by a thousand pecks — **Compy** ({killerSex}) and **{victim}** ({victimSpecies})."
+    - "Death by a thousand pecks — **Compy** and **{victim}** ({victimSpecies})."
     - "**{victim}** ({victimSpecies}) got the compy swarm special. RIP."
   fish:
-    - "Something fishy: **{killerSpecies}** ({killerSex}) got **{victim}** ({victimSpecies})."
-    - "**{victim}** ({victimSpecies}) found out water isn't always safe. **Fish** ({killerSex}) agrees."
+    - "Something fishy: **{killerSpecies}** got **{victim}** ({victimSpecies})."
+    - "**{victim}** ({victimSpecies}) found out water isn't always safe. **Fish** agrees."
   goat:
-    - "**Goat** ({killerSex}) headbutted **{victim}** ({victimSpecies}) into next week."
-    - "**{victim}** ({victimSpecies}) vs mountain **Goat** ({killerSex}) — goat meta."
+    - "**Goat** headbutted **{victim}** ({victimSpecies}) into next week."
+    - "**{victim}** ({victimSpecies}) vs mountain **Goat** — goat meta."
 
 pvp_quips:
   tyrannosaurus:

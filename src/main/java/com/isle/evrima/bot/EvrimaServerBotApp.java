@@ -12,6 +12,7 @@ import com.isle.evrima.bot.ecosystem.PopulationDashboardService;
 import com.isle.evrima.bot.ecosystem.SpeciesTaxonomy;
 import com.isle.evrima.bot.rcon.RconService;
 import com.isle.evrima.bot.schedule.AdaptiveAiDensityScheduler;
+import com.isle.evrima.bot.schedule.RconWriteGuard;
 import com.isle.evrima.bot.schedule.ScheduledCorpseWipeScheduler;
 import com.isle.evrima.bot.schedule.SpeciesPopulationControlScheduler;
 import com.isle.evrima.bot.security.PermissionService;
@@ -48,11 +49,12 @@ public final class EvrimaServerBotApp {
         database.migrate();
 
         RconService rcon = new RconService(live);
+        RconWriteGuard rconGuard = new RconWriteGuard();
         PermissionService permissions = new PermissionService(live);
         SpeciesTaxonomy taxonomy = PopulationDashboardService.loadTaxonomy(cfgPath);
         PopulationDashboardService population = new PopulationDashboardService(live, rcon, taxonomy);
-        ScheduledCorpseWipeScheduler corpseWipe = new ScheduledCorpseWipeScheduler(live, rcon, population);
-        SpeciesPopulationControlScheduler speciesControl = new SpeciesPopulationControlScheduler(live, rcon, population);
+        ScheduledCorpseWipeScheduler corpseWipe = new ScheduledCorpseWipeScheduler(live, rcon, population, rconGuard);
+        SpeciesPopulationControlScheduler speciesControl = new SpeciesPopulationControlScheduler(live, rcon, population, rconGuard);
         BotListener listener = new BotListener(live, database, rcon, permissions, population, speciesControl, corpseWipe);
 
         JDA jda = JDABuilder.createDefault(live.get().discordToken())
@@ -67,7 +69,7 @@ public final class EvrimaServerBotApp {
         new PopulationDashboardScheduler(live, database, population).start(jda);
         new ServerStatusTopicScheduler(live, database, population).start(jda);
         new IngameChatLogScheduler(live, database).start(jda);
-        new AdaptiveAiDensityScheduler(live, rcon, population, database).start();
+        new AdaptiveAiDensityScheduler(live, rcon, population, database, rconGuard).start();
         speciesControl.start();
         corpseWipe.start();
         LOG.info("EvrimaServerBot logged in as {}", jda.getSelfUser().getName());

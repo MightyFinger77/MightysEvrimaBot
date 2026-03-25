@@ -367,6 +367,9 @@ public final class IngameChatLogScheduler {
                 return flavored.get();
             }
         }
+        if (aiKiller) {
+            return "**" + kBold + "** (" + kSpecies + ") → **" + vName + "** (" + vSpecies + ", " + vGender + ")";
+        }
         return "**" + kBold + "** (" + kSpecies + ", " + kSex + ") → **" + vName + "** (" + vSpecies + ", " + vGender + ")";
     }
 

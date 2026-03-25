@@ -219,6 +219,11 @@ public final class PlayerlistPopulationParser {
         if (isSteamIdsPlusDisplayNamesOnly(playerlistRaw)) {
             return true;
         }
+        if (provisional.referencePlayerTotal() > 0
+                && provisional.unknownSpeciesLines() >= provisional.referencePlayerTotal()) {
+            // Even 1-4 players can have name-only / partial rows where playerlist gives totals but no species.
+            return true;
+        }
         int steam = provisional.steamId64Count();
         if (steam < 5) {
             return false;
@@ -253,7 +258,11 @@ public final class PlayerlistPopulationParser {
                 to = sliceFrom + 8192;
             }
             String slice = raw.substring(sliceFrom, to);
-            SpeciesTaxonomy.Entry hit = taxonomy.matchLineOrTokens(slice);
+            int steamInSlice = from - sliceFrom;
+            SpeciesTaxonomy.Entry hit = taxonomy.matchClosestToSteamId(slice, steamInSlice, 17);
+            if (hit == null) {
+                hit = taxonomy.matchLineOrTokens(slice);
+            }
             if (hit == null) {
                 unknown++;
             } else {

@@ -36,15 +36,21 @@ public final class SpeciesPopulationControlScheduler {
     private final LiveBotConfig live;
     private final RconService rcon;
     private final PopulationDashboardService population;
+    private final RconWriteGuard rconGuard;
     private final Set<String> disabledByScheduler = new LinkedHashSet<>();
     private volatile BotConfig configCache;
     private final Object nameLock = new Object();
     private final Map<String, String> baseNameByLower = new LinkedHashMap<>();
 
-    public SpeciesPopulationControlScheduler(LiveBotConfig live, RconService rcon, PopulationDashboardService population) {
+    public SpeciesPopulationControlScheduler(
+            LiveBotConfig live,
+            RconService rcon,
+            PopulationDashboardService population,
+            RconWriteGuard rconGuard) {
         this.live = Objects.requireNonNull(live, "live");
         this.rcon = Objects.requireNonNull(rcon, "rcon");
         this.population = Objects.requireNonNull(population, "population");
+        this.rconGuard = Objects.requireNonNull(rconGuard, "rconGuard");
     }
 
     private BotConfig cfg() {
@@ -106,14 +112,18 @@ public final class SpeciesPopulationControlScheduler {
         try {
             runOnce();
         } catch (IOException e) {
+            rconGuard.observeFailure();
             LOG.warn("species_population_control tick failed: {}", e.toString());
         } catch (Exception e) {
+            rconGuard.observeFailure();
             LOG.warn("species_population_control tick failed: {}", e.toString());
         }
     }
 
     private void runOnce() throws IOException {
         PopulationSnapshot snap = population.snapshot(true).data();
+        int players = Math.max(0, snap.referencePlayerTotal());
+        rconGuard.observeHealthy();
         Map<String, Integer> counts = lowerCaseCounts(snap.speciesCounts());
 
         String rawPlayables = rcon.run("getplayables");
@@ -167,6 +177,9 @@ public final class SpeciesPopulationControlScheduler {
             return;
         }
 
+        if (!rconGuard.allowSchedulerWrite("species_population_control", players)) {
+            return;
+        }
         String cmd = "updateplayables " + String.join(",", desired);
         try {
             rcon.run(cmd);
