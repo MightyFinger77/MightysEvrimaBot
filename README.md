@@ -359,4 +359,3 @@ Independent project; not affiliated with The Isle. Extend and run on your own in
 - [ ] Complete dino parking feature
 - [ ] Find a way to implement ai-wipe... (set density to 0 briefly maybe?)
 - [ ] Implement MySQL/MariaDB
-- [ ] Fix playerdata showing IP: (not present in getplayerdata text)
