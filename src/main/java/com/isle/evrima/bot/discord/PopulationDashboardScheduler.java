@@ -18,6 +18,9 @@ import java.util.concurrent.TimeUnit;
 
 /**
  * Optional periodic embed in a configured channel (edits the same message when possible).
+ * Uses {@link PopulationDashboardService#snapshot(boolean)} with the same cache-sharing rules as
+ * {@link ServerStatusTopicScheduler} so dashboard + channel topics can share one RCON {@code playerlist} when intervals
+ * are slower than {@code ecosystem.cache_ttl_seconds}.
  */
 public final class PopulationDashboardScheduler {
 
@@ -70,7 +73,8 @@ public final class PopulationDashboardScheduler {
             return;
         }
 
-        PopulationDashboardService.SnapshotResult res = population.snapshot(true);
+        boolean forcePopulationRefresh = forceFreshPopulationForDashboardTick();
+        PopulationDashboardService.SnapshotResult res = population.snapshot(forcePopulationRefresh);
         database.recordSteamIdsFromPlayerlistRaw(res.data().rawPlayerlist());
 
         var embed = EcosystemEmbeds.build(
@@ -92,6 +96,16 @@ public final class PopulationDashboardScheduler {
         } else {
             postFresh(ch, kvKey, embed);
         }
+    }
+
+    /**
+     * Same policy as {@link ServerStatusTopicScheduler}: when this scheduler runs more often than
+     * {@code ecosystem.cache_ttl_seconds}, always bypass cache so two ticks cannot share one stale snapshot.
+     */
+    private boolean forceFreshPopulationForDashboardTick() {
+        int dashSec = Math.max(1, live.get().populationDashboardIntervalMinutes()) * 60;
+        int ecoTtlSec = Math.max(5, live.get().ecosystemCacheTtlSeconds());
+        return dashSec < ecoTtlSec;
     }
 
     private void postFresh(TextChannel ch, String kvKey, net.dv8tion.jda.api.entities.MessageEmbed embed) {

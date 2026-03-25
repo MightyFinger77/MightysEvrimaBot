@@ -30,6 +30,10 @@ public final class ConfigYamlUpdater {
         ConfigYamlLineEdit.setSpeciesPopulationControlEnabled(configYaml, enabled);
     }
 
+    public static void setAdaptiveAiDensityEnabled(Path configYaml, boolean enabled) throws IOException {
+        ConfigYamlLineEdit.setAdaptiveAiDensityEnabled(configYaml, enabled);
+    }
+
     /**
      * Resolves a Discord-typed species name to the exact key used in the bundled default {@code config.yml}
      * {@code species_population_control.caps} block (PascalCase, etc.). Use this before slash-command replies so the

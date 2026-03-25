@@ -24,7 +24,9 @@ import java.util.concurrent.TimeUnit;
 
 /**
  * Dynamically locks/unlocks configured species by editing Evrima playables with RCON {@code updateplayables}.
- * Lock when {@code count >= cap}; unlock when {@code count <= cap - unlock_below_offset}.
+ * Lock when {@code count >= cap}; unlock when {@code count <= cap - unlock_below_offset} and the species is
+ * absent from the RCON playables list. Unlock does <b>not</b> require the bot to have locked the species earlier
+ * in the same process (so re-enabling works after restarts or if a prior lock was missed).
  * All limits and enabled flag come from {@code config.yml} (reloaded when admins change them via Discord).
  */
 public final class SpeciesPopulationControlScheduler {
@@ -133,9 +135,8 @@ public final class SpeciesPopulationControlScheduler {
             int cap = e.getValue();
             String key = species.toLowerCase(Locale.ROOT);
             boolean present = containsIgnoreCase(desired, species);
-            boolean disabledByUs = nextDisabled.contains(key);
             if (cap <= 0) {
-                if (disabledByUs && !present) {
+                if (nextDisabled.contains(key) && !present) {
                     desired.add(species);
                     nextDisabled.remove(key);
                     changes.add("UNLOCK " + species + " (cap=0)");
@@ -151,8 +152,12 @@ public final class SpeciesPopulationControlScheduler {
                 changes.add("LOCK " + species + " (" + count + "/" + cap + ")");
                 continue;
             }
-            if (disabledByUs && count <= unlockAt && !present) {
-                desired.add(species);
+            // Re-add when under the unlock threshold and missing from playables — even if we did not record a
+            // LOCK this session (restart, or LOCK never ran because the species was already absent at peak pop).
+            if (count <= unlockAt && !present) {
+                if (!containsIgnoreCase(desired, species)) {
+                    desired.add(species);
+                }
                 nextDisabled.remove(key);
                 changes.add("UNLOCK " + species + " (" + count + "/" + cap + ", unlock<= " + unlockAt + ")");
             }
@@ -174,7 +179,8 @@ public final class SpeciesPopulationControlScheduler {
         disabledByScheduler.clear();
         disabledByScheduler.addAll(nextDisabled);
         String summary = String.join(" | ", changes);
-        LOG.info("species_population_control: {}", summary);
+        LOG.info("species_population_control (scheduler, automatic): playable species updated — RCON updateplayables — {}",
+                summary);
         if (c.speciesPopulationControlAnnounceChanges()) {
             String msg = "[Species control] " + summary;
             rcon.run("announce " + msg.replace('\n', ' '));
@@ -252,6 +258,57 @@ public final class SpeciesPopulationControlScheduler {
         } catch (InterruptedException ie) {
             Thread.currentThread().interrupt();
         }
+    }
+
+    /**
+     * Merges the live RCON {@code getplayables} list with every species name under {@code species_population_control.caps}
+     * (so entries this scheduler removed are playable again), then sends {@code updateplayables}. Call immediately before
+     * turning {@code species_population_control.enabled} off via config.
+     * <p>
+     * If there are no cap keys configured, clears in-memory lock tracking only. If {@code getplayables} parses to an empty
+     * list but caps exist, throws — applying only cap names would drop other server playables.
+     *
+     * @return {@code true} if {@code updateplayables} was sent
+     */
+    public boolean restorePlayablesBeforeDisablingSpeciesControl() throws IOException {
+        BotConfig c = cfg();
+        Map<String, Integer> caps = c.speciesPopulationCaps();
+        if (caps.isEmpty()) {
+            disabledByScheduler.clear();
+            LOG.info("species_population_control: disable — no caps in config, skipping playables merge");
+            return false;
+        }
+        String rawPlayables = rcon.run("getplayables");
+        List<String> desired = new ArrayList<>(parsePlayables(rawPlayables));
+        if (desired.isEmpty()) {
+            throw new IOException(
+                    "getplayables returned no species list — cannot safely restore (would risk wiping playables). "
+                            + "Check RCON, then try again or fix playables manually.");
+        }
+        for (String species : caps.keySet()) {
+            if (species == null) {
+                continue;
+            }
+            String sp = species.trim();
+            if (sp.isEmpty()) {
+                continue;
+            }
+            if (!containsIgnoreCase(desired, sp)) {
+                desired.add(sp);
+            }
+        }
+        String cmd = "updateplayables " + String.join(",", desired);
+        try {
+            rcon.run(cmd);
+        } catch (IOException first) {
+            LOG.warn("species_population_control: restore updateplayables failed, retrying in 1s: {}", first.toString());
+            sleepQuietly(1000L);
+            rcon.run(cmd);
+        }
+        disabledByScheduler.clear();
+        LOG.info("species_population_control: merged caps roster into playables before disable ({} species in list)",
+                desired.size());
+        return true;
     }
 
     public Map<String, Integer> effectiveCapsReadOnly() {

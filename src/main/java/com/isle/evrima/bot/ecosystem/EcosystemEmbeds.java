@@ -42,11 +42,9 @@ public final class EcosystemEmbeds {
         overview.append("**Dominant herbivore:** ")
                 .append(dominantWithEmoji(taxonomy, guild, snap.dominantHerbivore()))
                 .append("\n");
-        if (snap.omnivores() > 0) {
-            overview.append("**Dominant omnivore:** ")
-                    .append(dominantWithEmoji(taxonomy, guild, snap.dominantOmnivore()))
-                    .append("\n");
-        }
+        overview.append("**Dominant omnivore:** ")
+                .append(dominantWithEmoji(taxonomy, guild, snap.dominantOmnivore()))
+                .append("\n");
         overview.append("\n").append(balanceLine(snap));
 
         String speciesBlock = formatSpeciesTable(snap, total, taxonomy, guild);

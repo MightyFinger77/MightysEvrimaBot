@@ -80,6 +80,9 @@ public final class AdaptiveAiDensityScheduler {
 
     private void runOnce() throws SQLException, IOException {
         BotConfig config = live.get();
+        if (!config.adaptiveAiDensityEnabled()) {
+            return;
+        }
         int maxPlayers = config.adaptiveAiDensityMaxPlayers();
         if (maxPlayers <= 0) {
             return;
@@ -99,7 +102,8 @@ public final class AdaptiveAiDensityScheduler {
         }
         warnedNoTier.set(false);
 
-        double target = tier.get().density();
+        AdaptiveAiDensityTier band = tier.get();
+        double target = band.density();
         Optional<String> prev = database.getBotKv(KV_LAST_DENSITY);
         if (prev.isPresent()) {
             try {
@@ -114,7 +118,15 @@ public final class AdaptiveAiDensityScheduler {
 
         rcon.run(EvrimaRcon.lineAidensity(target));
         database.putBotKv(KV_LAST_DENSITY, BigDecimal.valueOf(target).stripTrailingZeros().toPlainString());
-        LOG.info("adaptive_ai_density: {} players (~{}% of max {}) -> RCON aidensity {}",
-                players, fillPct, maxPlayers, BigDecimal.valueOf(target).stripTrailingZeros().toPlainString());
+        LOG.info(
+                "adaptive_ai_density (scheduler, automatic): AI density changed — fill {}% (tier {}–{}% → multiplier {}) — "
+                        + "{} players / max {} — RCON {}",
+                fillPct,
+                band.minPercentInclusive(),
+                band.maxPercentInclusive(),
+                BigDecimal.valueOf(target).stripTrailingZeros().toPlainString(),
+                players,
+                maxPlayers,
+                EvrimaRcon.lineAidensity(target));
     }
 }

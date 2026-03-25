@@ -229,6 +229,19 @@ final class ConfigYamlLineEdit {
         assertValidYaml(path);
     }
 
+    // --- adaptive_ai_density ---
+
+    static void setAdaptiveAiDensityEnabled(Path path, boolean enabled) throws IOException {
+        List<String> lines = readLines(path);
+        int[] sec = findTopLevelSection(lines, "adaptive_ai_density");
+        int bodyStart = sec[0] + 1;
+        int bodyEnd = sec[1];
+        int indent = sectionBodyIndent(lines, bodyStart, bodyEnd);
+        replaceKeyedScalarInRange(lines, bodyStart, bodyEnd, indent, "enabled", enabled ? "true" : "false");
+        writeLinesAtomic(path, lines);
+        assertValidYaml(path);
+    }
+
     static void setSpeciesCap(Path path, String species, int cap, String insertKeyIfNew) throws IOException {
         Objects.requireNonNull(species, "species");
         String sp = species.trim();

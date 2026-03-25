@@ -320,6 +320,8 @@ public final class BotListener extends ListenerAdapter {
                             }
                             case "ai-toggle" -> {
                                 String out = rcon.run("toggleai");
+                                LOG.info("evrima-admin ai-toggle: {} ({}) ran RCON toggleai",
+                                        event.getUser().getName(), event.getUser().getId());
                                 database.appendAudit(event.getUser().getId(), "rcon_toggleai", "");
                                 hookEditEphemeral(hook,
                                         "**What this does:** `toggleai` **flips** the server’s AI master switch (On→Off or Off→On). "
@@ -329,16 +331,36 @@ public final class BotListener extends ListenerAdapter {
                             }
                             case "ai-density" -> {
                                 double v = requiredDouble(event, "value");
+                                boolean hadAdaptive = live.get().adaptiveAiDensityEnabled();
+                                if (hadAdaptive) {
+                                    applyYamlMutation(y -> ConfigYamlUpdater.setAdaptiveAiDensityEnabled(y, false));
+                                }
                                 String out = rcon.run(EvrimaRcon.lineAidensity(v));
-                                database.appendAudit(event.getUser().getId(), "rcon_aidensity", String.valueOf(v));
-                                hookEditEphemeral(hook,
-                                        "**What this does:** `aidensity` sets how strongly **new** AI can spawn (multiplier; "
-                                                + "`0` usually means no new AI spawns). It does **not** mass-kill AI already in the world.\n\n"
-                                                + "```\n" + truncate(out, 1700) + "\n```");
+                                String uid = event.getUser().getId();
+                                LOG.info("evrima-admin ai-density: {} ({}) set AI spawn density to {} via RCON {}{}",
+                                        event.getUser().getName(), uid, v, EvrimaRcon.lineAidensity(v),
+                                        hadAdaptive ? " (adaptive_ai_density disabled in config.yml)" : "");
+                                database.appendAudit(uid, "rcon_aidensity", String.valueOf(v));
+                                if (hadAdaptive) {
+                                    database.appendAudit(uid, "adaptive_ai_density_disabled_for_manual_aidensity", "");
+                                }
+                                StringBuilder msg = new StringBuilder(512);
+                                if (hadAdaptive) {
+                                    msg.append("**Adaptive AI density** was **on** — it is now **off** in `config.yml` so the "
+                                            + "scheduler will not override this `aidensity`.\nSet `adaptive_ai_density.enabled` "
+                                            + "back to `true` when you want tiers to run again.\n\n");
+                                }
+                                msg.append("**What this does:** `aidensity` sets how strongly **new** AI can spawn (multiplier; "
+                                        + "`0` usually means no new AI spawns). It does **not** mass-kill AI already in the world.\n\n"
+                                        + "```\n").append(truncate(out, 1700)).append("\n```");
+                                hookEditEphemeral(hook, truncate(msg.toString(), 2000));
                             }
                             case "ai-classes" -> {
                                 String classes = requiredString(event, "classes").trim();
-                                String out = rcon.run("disableaiclasses " + classes.replace('\n', ' '));
+                                String rconLine = "disableaiclasses " + classes.replace('\n', ' ');
+                                String out = rcon.run(rconLine);
+                                LOG.info("evrima-admin ai-classes: {} ({}) disabled AI classes via RCON: {}",
+                                        event.getUser().getName(), event.getUser().getId(), truncate(classes, 500));
                                 database.appendAudit(event.getUser().getId(), "rcon_disableaiclasses", truncate(classes, 200));
                                 hookEditEphemeral(hook,
                                         "**What this does:** `disableaiclasses` tells the game to **stop those AI types** "
@@ -350,7 +372,16 @@ public final class BotListener extends ListenerAdapter {
                             }
                             case "ai-stop-spawns" -> {
                                 String uid = event.getUser().getId();
+                                boolean hadAdaptive = live.get().adaptiveAiDensityEnabled();
+                                if (hadAdaptive) {
+                                    applyYamlMutation(y -> ConfigYamlUpdater.setAdaptiveAiDensityEnabled(y, false));
+                                }
                                 StringBuilder acc = new StringBuilder();
+                                if (hadAdaptive) {
+                                    acc.append("**Adaptive AI density** was **on** — it is now **off** in `config.yml` so the "
+                                            + "scheduler will not override **aidensity 0**.\nSet `adaptive_ai_density.enabled` "
+                                            + "back to `true` when you want tiers to run again.\n\n");
+                                }
                                 acc.append("**`/evrima-admin ai-stop-spawns`** runs **`aidensity 0`** only — it reduces or stops **new** AI spawns.\n");
                                 acc.append("**It does not:** delete **living** AI (use **Insert → Admin → Wipe AI** in Evrima), "
                                         + "clean corpses (`wipecorpses`), or flip the global AI switch (`ai-toggle`).\n\n");
@@ -358,8 +389,14 @@ public final class BotListener extends ListenerAdapter {
                                         .append(truncate(rcon.run(EvrimaRcon.lineAidensity(0)), 1200))
                                         .append("\n```\n");
                                 acc.append("\n**Restore:** `/evrima-admin ai-density` with your usual multiplier.");
+                                LOG.info("evrima-admin ai-stop-spawns: {} ({}) set AI density to 0 via RCON aidensity 0{}",
+                                        event.getUser().getName(), uid,
+                                        hadAdaptive ? " (adaptive_ai_density disabled in config.yml)" : "");
                                 database.appendAudit(uid, "rcon_ai_stop_spawns", "");
-                                hookEditEphemeral(hook, acc.toString());
+                                if (hadAdaptive) {
+                                    database.appendAudit(uid, "adaptive_ai_density_disabled_for_manual_aidensity", "");
+                                }
+                                hookEditEphemeral(hook, truncate(acc.toString(), 2000));
                             }
                             case "ai-wipe" -> {
                                 String uid = event.getUser().getId();
@@ -375,6 +412,8 @@ public final class BotListener extends ListenerAdapter {
                             }
                             case "ai-learning" -> {
                                 String out = rcon.run("toggleailearning");
+                                LOG.info("evrima-admin ai-learning: {} ({}) ran RCON toggleailearning",
+                                        event.getUser().getName(), event.getUser().getId());
                                 database.appendAudit(event.getUser().getId(), "rcon_toggleailearning", "");
                                 hookEditEphemeral(hook, "RCON `toggleailearning`:\n```\n" + truncate(out, 1800) + "\n```");
                             }
@@ -391,13 +430,37 @@ public final class BotListener extends ListenerAdapter {
                                     }
                                     applyYamlMutation(y -> ConfigYamlUpdater.setSpeciesPopulationControlEnabled(y, true));
                                     database.appendAudit(event.getUser().getId(), "species_control_toggle", "on");
+                                    LOG.info("evrima-admin species-control: {} ({}) turned species_population_control ON (config.yml)",
+                                            event.getUser().getName(), event.getUser().getId());
                                     hookEditEphemeral(hook, "Species population control: **ON** (saved to `config.yml`)");
                                     break;
                                 }
                                 if ("off".equals(mode) || "disable".equals(mode)) {
+                                    boolean mergedPlayables;
+                                    try {
+                                        mergedPlayables = speciesControl.restorePlayablesBeforeDisablingSpeciesControl();
+                                    } catch (IOException e) {
+                                        LOG.warn("species_control disable: restore playables failed: {}", e.toString());
+                                        hookEditEphemeral(hook, truncate(
+                                                "Could not restore playables via RCON — `config.yml` was **not** changed: "
+                                                        + e.getMessage(), 2000));
+                                        break;
+                                    }
                                     applyYamlMutation(y -> ConfigYamlUpdater.setSpeciesPopulationControlEnabled(y, false));
                                     database.appendAudit(event.getUser().getId(), "species_control_toggle", "off");
-                                    hookEditEphemeral(hook, "Species population control: **OFF** (saved to `config.yml`)");
+                                    LOG.info("evrima-admin species-control: {} ({}) turned species_population_control OFF (config.yml){}",
+                                            event.getUser().getName(), event.getUser().getId(),
+                                            mergedPlayables ? "; merged caps into RCON playables first" : "");
+                                    if (mergedPlayables) {
+                                        hookEditEphemeral(hook,
+                                                "Merged **every species under `species_population_control.caps`** back into "
+                                                        + "the RCON playables list (with current `getplayables`), then set "
+                                                        + "species population control: **OFF** (saved to `config.yml`).");
+                                    } else {
+                                        hookEditEphemeral(hook,
+                                                "Species population control: **OFF** (saved to `config.yml`). "
+                                                        + "*(No `caps` entries — skipped RCON `updateplayables`.)*");
+                                    }
                                     break;
                                 }
                                 hookEditEphemeral(hook, "Invalid mode. Use `on`, `off`, or `status`.");
@@ -412,6 +475,8 @@ public final class BotListener extends ListenerAdapter {
                                 String canonical = ConfigYamlUpdater.requireCanonicalSpeciesCapKey(species);
                                 applyYamlMutation(y -> ConfigYamlUpdater.setSpeciesCapWithBundledKey(y, canonical, cap));
                                 database.appendAudit(event.getUser().getId(), "species_cap_set", canonical + "=" + cap);
+                                LOG.info("evrima-admin species-cap-set: {} ({}) set cap {} = {} (config.yml)",
+                                        event.getUser().getName(), event.getUser().getId(), canonical, cap);
                                 hookEditEphemeral(hook, "Updated `config.yml`: species cap **`" + canonical + "` = " + cap + "**");
                             }
                             case "species-cap-clear" -> {
@@ -419,6 +484,8 @@ public final class BotListener extends ListenerAdapter {
                                 String canonical = ConfigYamlUpdater.requireCanonicalSpeciesCapKey(species);
                                 applyYamlMutation(y -> ConfigYamlUpdater.clearSpeciesCapToExampleDefault(y, canonical));
                                 database.appendAudit(event.getUser().getId(), "species_cap_clear", canonical);
+                                LOG.info("evrima-admin species-cap-clear: {} ({}) reset cap {} (config.yml)",
+                                        event.getUser().getName(), event.getUser().getId(), canonical);
                                 hookEditEphemeral(hook, "Reset **`" + canonical + "`** cap in `config.yml` to the value from bundled defaults (or **0** if not listed there).");
                             }
                             case "species-cap-list" -> hookEditEphemeral(hook, speciesCapListText());

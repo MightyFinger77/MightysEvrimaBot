@@ -8,7 +8,6 @@ import net.dv8tion.jda.api.JDA;
 import net.dv8tion.jda.api.Permission;
 import net.dv8tion.jda.api.entities.Member;
 import net.dv8tion.jda.api.entities.channel.concrete.TextChannel;
-import net.dv8tion.jda.api.requests.RestAction;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -35,7 +34,16 @@ import java.util.concurrent.atomic.AtomicInteger;
  * Updates Discord text channel topics with RCON population stats (similar to Minecraft “server list” plugins).
  * Requires {@link Permission#MANAGE_CHANNEL} on each channel. Discord limits topics to 1024 characters and
  * rate-limits {@code PATCH /channels} heavily — this scheduler skips API calls when stats are unchanged (even
- * though the “Last update” time would change) and spaces out multi-channel updates.
+ * though the “Last update” time would change) and spaces out multi-channel updates. Occasional HTTP 429 with a short
+ * {@code Retry-After} is normal; JDA’s {@code RestRateLimiter} logs a WARN and retries — no extra bot action required.
+ * <p>
+ * <b>RCON:</b> One {@link PopulationDashboardService#snapshot(boolean)} per tick (never once per channel ID).
+ * When the topic interval is at least the ecosystem cache TTL, that call may reuse the same cached {@code playerlist}
+ * as {@link PopulationDashboardScheduler} / {@code /evrima ecosystem} to avoid duplicate RCON.
+ * <p>
+ * <b>Discord:</b> Channel topics are updated with {@code PATCH /channels/{id}} — Discord provides no bulk topic API, so
+ * {@code N} configured channels still require {@code N} sequential PATCHes (staggered). The rate limit is per channel /
+ * shared guild bucket, not “one PATCH for all channels.”
  */
 public final class ServerStatusTopicScheduler {
 
@@ -54,8 +62,8 @@ public final class ServerStatusTopicScheduler {
     private final AtomicBoolean warnedTimezone = new AtomicBoolean(false);
     /** Delays between sequential topic PATCHes (multi-channel); set in {@link #start}. */
     private volatile ScheduledExecutorService topicChainScheduler;
-    /** Prevents a new multi-channel rollout while a previous async chain is still PATCHing. */
-    private final AtomicBoolean topicMultiRolloutBusy = new AtomicBoolean(false);
+    /** Prevents a new topic rollout while a previous async chain is still PATCHing (any channel count). */
+    private final AtomicBoolean topicRolloutBusy = new AtomicBoolean(false);
 
     public ServerStatusTopicScheduler(LiveBotConfig live, Database database, PopulationDashboardService population) {
         this.live = Objects.requireNonNull(live, "live");
@@ -98,7 +106,8 @@ public final class ServerStatusTopicScheduler {
     }
 
     private void runOnce(JDA jda, List<Long> channelIds) throws SQLException, IOException {
-        PopulationDashboardService.SnapshotResult res = population.snapshot(true);
+        boolean forcePopulationRefresh = forceFreshPopulationForTopicTick();
+        PopulationDashboardService.SnapshotResult res = population.snapshot(forcePopulationRefresh);
         database.recordSteamIdsFromPlayerlistRaw(res.data().rawPlayerlist());
         long unique = database.countSeenServerSteamIds();
 
@@ -139,25 +148,51 @@ public final class ServerStatusTopicScheduler {
                 : live.get().serverStatusTopicMultiChannelStaggerSeconds();
         AtomicInteger remaining = new AtomicInteger(applicable.size());
         ScheduledExecutorService chainExec = topicChainScheduler;
-        if (applicable.size() <= 1 || chainExec == null) {
-            for (TextChannel ch : applicable) {
-                RestAction<Void> action = ch.getManager().setTopic(finalTopic);
-                final String fpToSave = fingerprint;
-                action.queue(
-                        ok -> finishTopicBatch(fpToSave, remaining, null),
-                        err -> {
-                            LOG.warn("server_status_topic: setTopic failed for {}: {}", ch.getId(), err.toString());
-                            finishTopicBatch(fpToSave, remaining, null);
-                        });
-            }
+        if (chainExec == null) {
+            LOG.warn("server_status_topic: chain executor not initialized — skipping PATCH");
             return;
         }
-        if (!topicMultiRolloutBusy.compareAndSet(false, true)) {
-            LOG.debug("server_status_topic: multi-channel rollout still in progress — skipping this tick");
+        if (!topicRolloutBusy.compareAndSet(false, true)) {
+            LOG.debug("server_status_topic: topic rollout still in progress — skipping this tick");
             return;
         }
-        Runnable releaseMultiRollout = () -> topicMultiRolloutBusy.set(false);
-        applyTopicChain(chainExec, applicable, finalTopic, fingerprint, staggerSec, 0, remaining, releaseMultiRollout);
+        Runnable releaseRollout = () -> topicRolloutBusy.set(false);
+        applyTopicChain(chainExec, applicable, finalTopic, fingerprint, staggerSec, 0, remaining, releaseRollout);
+    }
+
+    /**
+     * Force a fresh RCON {@code playerlist} on every topic tick when the topic runs more often than the ecosystem
+     * cache TTL — otherwise a cached snapshot could stay “valid” across two topic ticks and show a stale count.
+     * When the topic interval is slower than (or equal to) that TTL, allow {@code snapshot(false)} so one RCON parse
+     * can serve dashboard + topic in the same window.
+     */
+    private boolean forceFreshPopulationForTopicTick() {
+        int topicSec = Math.max(1, live.get().serverStatusTopicIntervalMinutes()) * 60;
+        int ecoTtlSec = Math.max(5, live.get().ecosystemCacheTtlSeconds());
+        return topicSec < ecoTtlSec;
+    }
+
+    /** Discord topic text; null/blank treated as empty for comparison. */
+    private static String normTopic(String topic) {
+        return topic == null ? "" : topic.strip();
+    }
+
+    /**
+     * Queues {@code PATCH /channels} only if the cached channel topic differs — avoids redundant calls when JDA’s
+     * entity cache already matches (and reduces soft 429s when something else also updates the channel).
+     */
+    private void queueSetTopic(TextChannel ch, String finalTopic, Runnable afterAttempt) {
+        if (normTopic(ch.getTopic()).equals(normTopic(finalTopic))) {
+            LOG.debug("server_status_topic: skip setTopic (topic already matches) #{}", ch.getId());
+            afterAttempt.run();
+            return;
+        }
+        ch.getManager().setTopic(finalTopic).queue(
+                ok -> afterAttempt.run(),
+                err -> {
+                    LOG.warn("server_status_topic: setTopic failed for {}: {}", ch.getId(), err.toString());
+                    afterAttempt.run();
+                });
     }
 
     /**
@@ -179,18 +214,13 @@ public final class ServerStatusTopicScheduler {
         }
         TextChannel ch = channels.get(index);
         final String fpToSave = fingerprint;
-        ch.getManager().setTopic(finalTopic).queue(
-                ok -> {
+        Runnable afterThisChannel =
+                () -> {
                     finishTopicBatch(fpToSave, remaining, releaseMultiRollout);
                     scheduleNextTopicPatch(
                             delayExec, channels, finalTopic, fingerprint, staggerSec, index + 1, remaining, releaseMultiRollout);
-                },
-                err -> {
-                    LOG.warn("server_status_topic: setTopic failed for {}: {}", ch.getId(), err.toString());
-                    finishTopicBatch(fpToSave, remaining, releaseMultiRollout);
-                    scheduleNextTopicPatch(
-                            delayExec, channels, finalTopic, fingerprint, staggerSec, index + 1, remaining, releaseMultiRollout);
-                });
+                };
+        queueSetTopic(ch, finalTopic, afterThisChannel);
     }
 
     private void scheduleNextTopicPatch(
