@@ -37,7 +37,7 @@ entries:
     emoji: 🦖
     keys: [ Herrerasaurus, Herrera ]
   - display: Omniraptor
-    diet: omnivore
+    diet: carnivore
     emoji: 🦎
     keys: [ Omniraptor, Omni, Dinubabt ]
   - display: Troodon

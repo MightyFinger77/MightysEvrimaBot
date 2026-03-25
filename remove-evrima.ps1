@@ -7,7 +7,7 @@
 #   .\remove-evrima.ps1 -BotToken "YOUR_BOT_TOKEN"
 
 param(
-    [string] $ApplicationId = "1486185207509029036",
+    [string] $ApplicationId = "YOUR_BOTS_APPLICATION_ID",
     [Parameter(Mandatory = $true)]
     [string] $BotToken
 )
