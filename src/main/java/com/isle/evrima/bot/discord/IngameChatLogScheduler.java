@@ -1,5 +1,7 @@
 package com.isle.evrima.bot.discord;
 
+import com.isle.evrima.bot.config.BotConfig;
+import com.isle.evrima.bot.config.KillFlavorPack;
 import com.isle.evrima.bot.config.LiveBotConfig;
 import com.isle.evrima.bot.db.Database;
 import net.dv8tion.jda.api.JDA;
@@ -17,9 +19,12 @@ import java.nio.file.Path;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.EnumSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -165,7 +170,7 @@ public final class IngameChatLogScheduler {
         database.putBotKv(KV_OFFSET, String.valueOf(offset));
 
         for (String line : toSend) {
-            String formatted = formatForDiscord(line.strip(), live.get().ingameChatLogMirrorLocalChat());
+            String formatted = formatForDiscord(line.strip(), live.get().ingameChatLogMirrorLocalChat(), live.get());
             if (formatted.isBlank()) {
                 continue;
             }
@@ -233,7 +238,7 @@ public final class IngameChatLogScheduler {
         return "Spatial".equalsIgnoreCase(c) || "Local".equalsIgnoreCase(c);
     }
 
-    static String formatForDiscord(String raw, boolean mirrorLocalChat) {
+    static String formatForDiscord(String raw, boolean mirrorLocalChat, BotConfig config) {
         String t = raw;
         for (int i = 0; i < 4; i++) {
             String next = LEADING_TIMESTAMP.matcher(t).replaceFirst("").trim();
@@ -266,7 +271,7 @@ public final class IngameChatLogScheduler {
         Matcher killAi = LOG_KILL_AI.matcher(t);
         if (killAi.matches()) {
             String tail = killAi.group(1).trim();
-            String line = formatKillLine("", tail);
+            String line = formatKillLine("", tail, config);
             return truncateDiscord(line);
         }
 
@@ -274,28 +279,32 @@ public final class IngameChatLogScheduler {
         if (kill.matches()) {
             String name = kill.group(1).trim();
             String tail = kill.group(3).trim();
-            String line = formatKillLine(name, tail);
+            String line = formatKillLine(name, tail, config);
             return truncateDiscord(line);
         }
 
         return truncateDiscord(fallbackPrettyLog(t));
     }
 
-    private static String formatKillLine(String player, String tail) {
+    private static boolean useKillFlavor(BotConfig cfg) {
+        return cfg != null && cfg.ingameChatLogKillFlavorEnabled() && cfg.killFlavorPack().hasAny();
+    }
+
+    private static String formatKillLine(String player, String tail, BotConfig config) {
         String p = escapeMd(player.trim());
         String killerBold = killerBoldMd(p);
         String t = tail.trim();
         if (t.isEmpty()) {
-            return "**Kill:** **" + killerBold + "**";
+            return "**" + killerBold + "**";
         }
 
         Matcher pvp = KILL_PVP.matcher(t);
         if (pvp.matches()) {
-            return formatPvpKillLine(p, pvp);
+            return formatPvpKillLine(player, pvp, config);
         }
         Matcher pvp2 = KILL_PVP_NO_PREFIX.matcher(t);
         if (pvp2.matches()) {
-            return formatPvpKillLine(p, pvp2);
+            return formatPvpKillLine(player, pvp2, config);
         }
 
         Matcher nat = KILL_NATURAL.matcher(t);
@@ -304,7 +313,18 @@ public final class IngameChatLogScheduler {
             String sex = escapeMd(nat.group(2).trim());
             String cause = escapeMd(nat.group(3).trim());
             if (!cause.toLowerCase(Locale.ROOT).contains("killed the following player")) {
-                return "**Kill:** **" + killerBold + "** — " + species + " (" + sex + ") — " + cause;
+                if (useKillFlavor(config)) {
+                    Map<String, String> ph = new LinkedHashMap<>();
+                    ph.put("victim", killerBold);
+                    ph.put("species", species);
+                    ph.put("sex", sex);
+                    ph.put("cause", cause);
+                    Optional<String> flavored = config.killFlavorPack().rollNaturalLine(ph);
+                    if (flavored.isPresent()) {
+                        return flavored.get();
+                    }
+                }
+                return "**" + killerBold + "** — " + species + " (" + sex + ") — " + cause;
             }
         }
 
@@ -313,7 +333,7 @@ public final class IngameChatLogScheduler {
                 .replaceAll("(?i)\\s*Growth:\\s*\\S+", "")
                 .replaceAll("\\s+", " ")
                 .trim();
-        return "**Kill:** **" + killerBold + "** — " + escapeMd(rest);
+        return "**" + killerBold + "** — " + escapeMd(rest);
     }
 
     /** Empty killer display name (AI / {@code []} in log) → bold {@code AI}. */
@@ -321,14 +341,33 @@ public final class IngameChatLogScheduler {
         return escapedPlayerName.isEmpty() ? escapeMd("AI") : escapedPlayerName;
     }
 
-    private static String formatPvpKillLine(String killerEscaped, Matcher m) {
-        String kSpecies = escapeMd(m.group(1).trim());
+    private static String formatPvpKillLine(String playerRaw, Matcher m, BotConfig config) {
+        String kSpeciesRaw = m.group(1).trim();
+        String kSpecies = escapeMd(kSpeciesRaw);
         String kSex = escapeMd(m.group(2).trim());
         String vName = escapeMd(m.group(3).trim());
-        String vSpecies = escapeMd(m.group(4).trim());
+        String vSpeciesRaw = m.group(4).trim();
+        String vSpecies = escapeMd(vSpeciesRaw);
         String vGender = escapeMd(m.group(5).trim());
+        String killerEscaped = escapeMd(playerRaw.trim());
         String kBold = killerBoldMd(killerEscaped);
-        return "**Kill:** **" + kBold + "** (" + kSpecies + ", " + kSex + ") → **" + vName + "** (" + vSpecies + ", " + vGender + ")";
+        boolean aiKiller = playerRaw.trim().isEmpty();
+
+        if (useKillFlavor(config)) {
+            KillFlavorPack pack = config.killFlavorPack();
+            Map<String, String> ph = new LinkedHashMap<>();
+            ph.put("killer", kBold);
+            ph.put("victim", vName);
+            ph.put("killerSpecies", kSpecies);
+            ph.put("killerSex", kSex);
+            ph.put("victimSpecies", vSpecies);
+            ph.put("victimGender", vGender);
+            Optional<String> flavored = pack.rollPvpLine(aiKiller, kSpeciesRaw, vSpeciesRaw, ph);
+            if (flavored.isPresent()) {
+                return flavored.get();
+            }
+        }
+        return "**" + kBold + "** (" + kSpecies + ", " + kSex + ") → **" + vName + "** (" + vSpecies + ", " + vGender + ")";
     }
 
     /** Strip log tags / SteamIDs; used when a line matched filters but not our strict parsers. */

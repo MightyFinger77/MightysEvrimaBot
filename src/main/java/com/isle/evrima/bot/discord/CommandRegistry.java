@@ -97,7 +97,7 @@ public final class CommandRegistry {
                         new SubcommandData("getplayer", "Dump player/server fields (RCON getplayerdata)")
                                 .addOption(OptionType.STRING, "player", "SteamID64 or in-game name (from live playerlist)", true),
                         new SubcommandData("wipecorpses", "Remove corpses / cleanup bodies (RCON wipecorpses)"),
-                        new SubcommandData("reload", "Reload config.yml + species-taxonomy.yml from disk (manual edits)"),
+                        new SubcommandData("reload", "Reload config.yml, species-taxonomy.yml, and kill-flavor.yml from disk"),
                         new SubcommandData("save", "Tell the game to save (RCON save)"),
                         new SubcommandData("unlink", "Remove this bot’s stored Steam link for a Discord user (not in-game)")
                                 .addOption(OptionType.USER, "user", "Discord user", true),

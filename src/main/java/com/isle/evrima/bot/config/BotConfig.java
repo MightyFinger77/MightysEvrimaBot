@@ -1,5 +1,7 @@
 package com.isle.evrima.bot.config;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.yaml.snakeyaml.Yaml;
 
 import java.io.IOException;
@@ -13,6 +15,8 @@ import java.util.Map;
 import java.util.Objects;
 
 public final class BotConfig {
+
+    private static final Logger LOG = LoggerFactory.getLogger(BotConfig.class);
 
     private final String discordToken;
     private final long guildId;
@@ -89,6 +93,11 @@ public final class BotConfig {
     private final boolean ingameChatLogMirrorLocalChat;
     /** Lines containing any of these substrings are mirrored (e.g. chat + kill/death markers). */
     private final List<String> ingameChatLogLineContainsAny;
+    /** When true and {@link #killFlavorPack()} has content, kill lines use {@code kill-flavor.yml} templates. */
+    private final boolean ingameChatLogKillFlavorEnabled;
+    /** Absolute path used to load {@link #killFlavorPack()} (for logging / troubleshooting). */
+    private final Path killFlavorYamlPath;
+    private final KillFlavorPack killFlavorPack;
 
     public BotConfig(
             String discordToken,
@@ -136,6 +145,9 @@ public final class BotConfig {
             int ingameChatLogPollSeconds,
             boolean ingameChatLogMirrorLocalChat,
             List<String> ingameChatLogLineContainsAny,
+            boolean ingameChatLogKillFlavorEnabled,
+            Path killFlavorYamlPath,
+            KillFlavorPack killFlavorPack,
             Path configYamlPath
     ) {
         this.discordToken = discordToken;
@@ -184,6 +196,11 @@ public final class BotConfig {
         this.ingameChatLogPollSeconds = ingameChatLogPollSeconds;
         this.ingameChatLogMirrorLocalChat = ingameChatLogMirrorLocalChat;
         this.ingameChatLogLineContainsAny = List.copyOf(ingameChatLogLineContainsAny);
+        this.ingameChatLogKillFlavorEnabled = ingameChatLogKillFlavorEnabled;
+        this.killFlavorYamlPath = killFlavorYamlPath == null
+                ? Path.of("kill-flavor.yml")
+                : killFlavorYamlPath.toAbsolutePath().normalize();
+        this.killFlavorPack = Objects.requireNonNull(killFlavorPack, "killFlavorPack");
     }
 
     @SuppressWarnings("unchecked")
@@ -356,6 +373,22 @@ public final class BotConfig {
         }
         List<String> chatMarkers = parseLogLineMarkers(chatLog.get("line_contains"));
         boolean chatMirrorLocal = parseBooleanYaml(chatLog.get("mirror_local_chat"), false);
+        boolean killFlavorEnabled = parseBooleanYaml(chatLog.get("kill_flavor_enabled"), true);
+        String killFlavorPathRaw = stringOrEmpty(chatLog.get("kill_flavor_path"));
+        Path killFlavorYaml = resolveBesideConfig(yamlFile, killFlavorPathRaw, "kill-flavor.yml");
+        KillFlavorPack killPack = KillFlavorPack.EMPTY;
+        if (killFlavorEnabled) {
+            try {
+                killPack = KillFlavorPack.loadFromPath(killFlavorYaml);
+                if (!killPack.hasAny()) {
+                    LOG.warn("ingame_chat_log.kill_flavor_enabled but {} has no usable quips — factual kill lines until you add some",
+                            killFlavorYaml.toAbsolutePath());
+                }
+            } catch (IOException e) {
+                LOG.warn("ingame_chat_log.kill_flavor load failed ({}): {}", killFlavorYaml.toAbsolutePath(), e.toString());
+                killPack = KillFlavorPack.EMPTY;
+            }
+        }
 
         return new BotConfig(
                 token,
@@ -403,8 +436,20 @@ public final class BotConfig {
                 chatPoll,
                 chatMirrorLocal,
                 chatMarkers,
+                killFlavorEnabled,
+                killFlavorYaml,
+                killPack,
                 yamlFile.toAbsolutePath().normalize()
         );
+    }
+
+    private static Path resolveBesideConfig(Path configYaml, String pathRaw, String defaultFilename) {
+        Path parent = configYaml.getParent();
+        if (parent == null) {
+            parent = Path.of(".").toAbsolutePath().normalize();
+        }
+        String use = pathRaw.isBlank() ? defaultFilename : pathRaw.trim();
+        return parent.resolve(use).normalize();
     }
 
     /**
@@ -831,5 +876,22 @@ public final class BotConfig {
      */
     public List<String> ingameChatLogLineContainsAny() {
         return ingameChatLogLineContainsAny;
+    }
+
+    /**
+     * When true and {@link #killFlavorPack()} {@linkplain KillFlavorPack#hasAny() has quips}, mirrored kill lines
+     * use templates from {@code kill-flavor.yml} beside {@code config.yml} (or {@link #ingameChatLogKillFlavorPath()}).
+     */
+    public boolean ingameChatLogKillFlavorEnabled() {
+        return ingameChatLogKillFlavorEnabled;
+    }
+
+    /** YAML path used for kill flavor templates (same directory as {@code config.yml} by default). */
+    public Path killFlavorYamlPath() {
+        return killFlavorYamlPath;
+    }
+
+    public KillFlavorPack killFlavorPack() {
+        return killFlavorPack;
     }
 }

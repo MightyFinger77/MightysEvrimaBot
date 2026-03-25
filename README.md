@@ -1,5 +1,7 @@
 # EvrimaServerBot
 
+**Version 1.0.2** — release notes: [CHANGELOG.md](CHANGELOG.md).
+
 Self-hosted **Discord** companion for **The Isle Evrima** dedicated servers: Steam↔Discord linking, **RCON** admin actions, basic economy, and parking-slot metadata (no proprietary game hooks).
 
 ---
@@ -118,13 +120,13 @@ Paths like `database.path` are relative to the **process working directory** (th
 
 **Adaptive AI density:** optional `adaptive_ai_density` runs RCON `aidensity` on a timer from **how full the server is** vs `max_players` (same **player estimate** as the ecosystem dashboard). Set `enabled: true` and `max_players` to your slot cap. **`tiers`** is a list of `{ min_percent, max_percent, density }` bands (inclusive, 0–100); gaps with no matching band are skipped (with a warning). Empty / omitted `tiers` uses the same four default bands as the bundled `config.yml` (0–24 → `2.0`, 25–49 → `1.0`, 50–79 → `0.75`, 80–100 → `0.5`). The bot stores the last applied value in SQLite so it **does not** re-send RCON when the target density is unchanged. Manual `/evrima-admin ai-density` still works; the next scheduler tick may override it.
 
-**Species population control (dynamic dino locks):** optional `species_population_control` edits RCON `updateplayables` from live ecosystem counts so capped species can be temporarily removed/re-added without manual admin intervention. Rule is **lock at** `count >= cap`, **unlock at** `count <= cap - unlock_below_offset` (hysteresis to reduce flapping). Tick interval is `interval_seconds` (default 60). On `updateplayables` failure, the bot retries once after **1 second**. Optional `announce_changes` can send in-game notices (default false to avoid spam). Admins can toggle enabled state and caps with `/evrima-admin species-control`, `species-cap-set`, and `species-cap-clear` — changes are **written to `config.yml`** (same idea as a Minecraft plugin; not stored in SQLite).
+**Species population control (dynamic dino locks):** optional `species_population_control` edits RCON `updateplayables` from live ecosystem counts so capped species can be temporarily removed/re-added without manual admin intervention. Rule is **lock at** `count >= cap`, **unlock at** `count <= cap - unlock_below_offset` when the species is **absent** from the current `getplayables` list (hysteresis to reduce flapping). Unlock does **not** require the bot to have locked that species earlier in the same process (avoids “stuck off” after a restart). Tick interval is `interval_seconds` (default 60). On `updateplayables` failure, the bot retries once after **1 second**. Optional `announce_changes` can send in-game notices (default false to avoid spam). Admins can toggle enabled state and caps with `/evrima-admin species-control`, `species-cap-set`, and `species-cap-clear` — changes are **written to `config.yml`** (same idea as a Minecraft plugin; not stored in SQLite).
 
 **Channel topic (server status line):** optional `server_status_topic` sets **Discord channel topic(s)** on a timer (e.g. `12/60 players online | 847 unique players seen | Last update: …`). Discord **heavily rate-limits** `PATCH /channels` (guild **shared** bucket); the bot only calls the API when **player count** or **`max_players`** (or bridge-uptime minute, if enabled) **change** — not when only “Last update” or **unique-seen** would change, so new Steam IDs in `playerlist` do not trigger a topic refresh by themselves (the **unique** line still updates the next time the fingerprint changes, e.g. population moves). With **two or more** channels, topic PATCHes run **one at a time**, then wait **`multi_channel_stagger_seconds`** (default **210**, clamped 120–900) before the next — Discord has hit **~183s** Retry-After on this route; raise stagger or use fewer channels if you still see 429s. Prefer **`interval_minutes` ≥ 5** for several `channel_ids`; keep **`show_bridge_uptime: false`** unless needed. Use **`channel_id`** and/or **`channel_ids`** (merged, deduplicated). **Manage Channels** is required. **Unique players** in the topic text come from SQLite (Steam IDs seen while the bot runs). Use `max_players` for the `/` cap, or `0` to omit it.
 
 **Scheduled corpse wipes:** configure `scheduled_wipecorpses.enabled` + `interval_minutes` to run RCON `wipecorpses` automatically (same action as `/evrima-admin wipecorpses`). `enabled` supports `true`, `false`, and `dynamic`. In `dynamic`, wipes target ON when online percent is at least `dynamic_enable_percent` of `dynamic_max_players`, and OFF when below it; transitions are debounced by `dynamic_disable_grace_seconds` in both directions (anti-flap). After a **pre-wipe `announce`** succeeds, that wipe still runs on schedule even if population drops below threshold (players were warned). Optional `warn_before_minutes` sends an in-game `announce` first; set `0` to skip. `announce_message` customizes the warning text. `/evrima-admin corpse-wipe-control`, `corpse-wipe-set`, and `corpse-wipe-clear` **update `config.yml`**; `corpse-wipe-clear` resets fields (or the whole section) to values from the bundled default template (`config.yml` in the JAR).
 
-**In-game log → Discord (chat + kills/deaths):** Evrima RCON does **not** expose chat or kill feeds. Optional `ingame_chat_log` tails **`TheIsle.log`** and posts lines that match **any** substring in `line_contains` (YAML list or one string). Defaults include **`LogTheIsleChatData`** (chat) and **`LogTheIsleKillData`** (kills / many death messages such as PvP — same markers as [Theislemanager/Chatbot](https://github.com/Theislemanager/Chatbot)). By default **`mirror_local_chat: false`** drops **`[Spatial]`** / **`[Local]`** lines after parse so only global-style traffic is mirrored; set **`mirror_local_chat: true`** to include proximity chat. The bot **parses** known formats into short Discord lines, e.g. `[Global] **Player:** message` and `**Kill:** **Player** — …`. Other shapes get a best-effort strip of tags/SteamIDs. Starvation / odd kills: add substrings from your log if needed. **YAML on Windows:** use forward slashes or single-quoted paths (see `ingame_chat_log` in the default `config.yml` bundled with the JAR). `channel_id: 0` disables; offset in `bot_kv`; new paths start at EOF.
+**In-game log → Discord (chat + kills/deaths):** Evrima RCON does **not** expose chat or kill feeds. Optional `ingame_chat_log` tails **`TheIsle.log`** and posts lines that match **any** substring in `line_contains` (YAML list or one string). Defaults include **`LogTheIsleChatData`** (chat) and **`LogTheIsleKillData`** (kills / many death messages such as PvP — same markers as [Theislemanager/Chatbot](https://github.com/Theislemanager/Chatbot)). By default **`mirror_local_chat: false`** drops **`[Spatial]`** / **`[Local]`** lines after parse so only global-style traffic is mirrored; set **`mirror_local_chat: true`** to include proximity chat. The bot **parses** known formats into short Discord lines, e.g. `[Global] **Player:** message` and factual kills like `**Player** — Species (Sex) — cause` or PvP `**Killer** (Species, Sex) → **Victim** (…)`. **Kill flavor (1.0.2+):** when **`kill_flavor_enabled`** is true, templates come from **`kill-flavor.yml`** beside `config.yml` (extracted from the JAR if missing) — per-species PvP lines, AI-kill lines, random natural-death quips, same-species lines, and generic fallbacks; set **`kill_flavor_enabled: false`** for factual lines only. Other shapes get a best-effort strip of tags/SteamIDs. Starvation / odd kills: add substrings from your log if needed. **YAML on Windows:** use forward slashes or single-quoted paths (see `ingame_chat_log` in the default `config.yml` bundled with the JAR). `channel_id: 0` disables; offset in `bot_kv`; new paths start at EOF.
 
 ---
 
@@ -136,7 +138,7 @@ Build the bot yourself if you are not using a prebuilt release JAR. You only nee
 
 - **Java Development Kit (JDK) 17** or newer (LTS such as Temurin 17/21 is fine). The project targets **Java 17** (`release 17` in `pom.xml`).
 - **Apache Maven 3.8+** (3.9.x recommended) on your `PATH`.
-- A copy of this project’s source (git clone, zip download, etc.). Open a terminal in the **project root** — the directory that contains **`pom.xml`** (for this repo that is usually a versioned folder like `EvrimaServerBot/1.0.1`).
+- A copy of this project’s source (git clone, zip download, etc.). Open a terminal in the **project root** — the directory that contains **`pom.xml`** (for this repo that is usually a versioned folder like `EvrimaServerBot/1.0.2`).
 
 Check versions:
 
@@ -166,25 +168,25 @@ After a successful build:
 
 | Artifact | Location | Notes |
 |----------|----------|--------|
-| **Runnable bot JAR** | `target/evrima-server-bot-1.0.1.jar` | **Use this** with `java -jar`. Includes dependencies (tens of MB — if the file is only a few hundred KB, you did not build the shaded artifact). |
-| Original (non-shaded) | `target/original-evrima-server-bot-1.0.1.jar` | Internal; **do not** run this as the bot — it is not a fat JAR. |
+| **Runnable bot JAR** | `target/evrima-server-bot-1.0.2.jar` | **Use this** with `java -jar`. Includes dependencies (tens of MB — if the file is only a few hundred KB, you did not build the shaded artifact). |
+| Original (non-shaded) | `target/original-evrima-server-bot-1.0.2.jar` | Internal; **do not** run this as the bot — it is not a fat JAR. |
 
-Copy **`evrima-server-bot-1.0.1.jar`** (the one **without** `original-` in the name) to the folder where you run the bot. Optionally add **`start-bot.bat`** (Windows) or **`start-bot.sh`** (Linux/macOS), then follow [Run](#run).
+Copy **`evrima-server-bot-1.0.2.jar`** (the one **without** `original-` in the name) to the folder where you run the bot. Optionally add **`start-bot.bat`** (Windows) or **`start-bot.sh`** (Linux/macOS), then follow [Run](#run).
 
 ### Windows quick reference
 
 ```powershell
-cd C:\path\to\EvrimaServerBot\1.0.1
+cd C:\path\to\EvrimaServerBot\1.0.2
 mvn clean package
-dir target\evrima-server-bot-1.0.1.jar
+dir target\evrima-server-bot-1.0.2.jar
 ```
 
 ### Linux / macOS quick reference
 
 ```bash
-cd /path/to/EvrimaServerBot/1.0.1
+cd /path/to/EvrimaServerBot/1.0.2
 mvn clean package
-ls -lh target/evrima-server-bot-1.0.1.jar
+ls -lh target/evrima-server-bot-1.0.2.jar
 ```
 
 ### IDE (IntelliJ, VS Code, Eclipse)
@@ -196,7 +198,7 @@ Import the folder as a **Maven** project (open `pom.xml` or the root directory).
 - **`mvn` not found** — Install Maven and add it to `PATH`, or use a full path to `mvn`.
 - **Wrong Java** — If Maven uses Java 8/11, set **`JAVA_HOME`** to a JDK 17+ install and restart the terminal.
 - **`BUILD FAILURE` / compiler errors** — Ensure you are on the intended **branch or version folder** and JDK **17+**.
-- **JAR runs but classes are missing** — You started **`original-*.jar`** or a non-shaded artifact; run **`target/evrima-server-bot-1.0.1.jar`** from a **`package`** build that completed **`shade`**.
+- **JAR runs but classes are missing** — You started **`original-*.jar`** or a non-shaded artifact; run **`target/evrima-server-bot-1.0.2.jar`** from a **`package`** build that completed **`shade`**.
 
 ---
 
@@ -208,24 +210,24 @@ Import the folder as a **Maven** project (open `pom.xml` or the root directory).
 
 ```bash
 cd /path/to/bot-folder
-java -jar evrima-server-bot-1.0.1.jar
+java -jar evrima-server-bot-1.0.2.jar
 ```
 
 ```powershell
 cd C:\path\to\bot-folder
-java -jar evrima-server-bot-1.0.1.jar
+java -jar evrima-server-bot-1.0.2.jar
 ```
 
 **JDK 24+:** If you see warnings about `java.lang.System::load` / SQLite, either use **`start-bot.bat`** / **`start-bot.sh`** (they add `--enable-native-access=ALL-UNNAMED` when supported) or run:
 
 ```bash
-java --enable-native-access=ALL-UNNAMED -jar evrima-server-bot-1.0.1.jar
+java --enable-native-access=ALL-UNNAMED -jar evrima-server-bot-1.0.2.jar
 ```
 
 With an explicit **`config.yml`** path (taxonomy file is expected **in the same folder**; missing **`species-taxonomy.yml`** is created from the JAR if absent):
 
 ```bash
-java -jar evrima-server-bot-1.0.1.jar /opt/evrima-bot/configs/config.yml
+java -jar evrima-server-bot-1.0.2.jar /opt/evrima-bot/configs/config.yml
 ```
 
 ### On first start (and every start)
@@ -271,7 +273,7 @@ Commands are split into **four roots** so you can hide staff trees in **Server S
 
 ### `/evrima-admin` (configure visibility + bot checks `admin` **or** `head_admin`)
 
-**Config persistence:** If a subcommand changes a setting that lives in `config.yml`, the bot **updates that file** and reloads config in memory (`applyYamlMutation` in `BotListener`). **`/evrima-admin reload`** re-reads `config.yml` and `species-taxonomy.yml` from disk after **manual** edits (no JVM restart). Species and corpse-wipe slash edits **only change the relevant lines** under `species_population_control` / `scheduled_wipecorpses` so your banner, comments, and the rest of the file layout stay intact (no full-file YAML re-dump). Other entries here are **RCON** (game server) or **SQLite** (e.g. `/evrima-admin give` points). `bot_kv` is still used for operational state such as chat-log tail offsets and dashboard message IDs, not for YAML tuning.
+**Config persistence:** If a subcommand changes a setting that lives in `config.yml`, the bot **updates that file** and reloads config in memory (`applyYamlMutation` in `BotListener`). **`/evrima-admin reload`** re-reads `config.yml`, `species-taxonomy.yml`, and **`kill-flavor.yml`** (when kill flavor is enabled) from disk after **manual** edits (no JVM restart). Species and corpse-wipe slash edits **only change the relevant lines** under `species_population_control` / `scheduled_wipecorpses` so your banner, comments, and the rest of the file layout stay intact (no full-file YAML re-dump). Other entries here are **RCON** (game server) or **SQLite** (e.g. `/evrima-admin give` points). `bot_kv` is still used for operational state such as chat-log tail offsets and dashboard message IDs, not for YAML tuning.
 
 | Subcommand | What it does |
 |------------|----------------|
@@ -280,7 +282,7 @@ Commands are split into **four roots** so you can hide staff trees in **Server S
 | `kick` / `ban` / `dm` | Option **`player`**: **SteamID64** or **in-game display name** (bot fetches `playerlist` and matches; ambiguous names get a list). **`kick`** uses a **space** after the resolved SteamID. **`ban`** / **`dm`** use **comma** fields on the wire (`lineBan` / `lineDirectMessage`). |
 | `getplayer` | RCON `getplayerdata`; **`player`** = SteamID64 or name (same resolver as `dm`). |
 | `wipecorpses` | Corpse / body cleanup (not deleting live AI). |
-| `reload` | Reload **`config.yml`** + **`species-taxonomy.yml`** from disk into memory (manual YAML edits). Does not restart the process — scheduler **intervals** and some **channel/log paths** may still need a **full restart** to apply everywhere. |
+| `reload` | Reload **`config.yml`**, **`species-taxonomy.yml`**, and **`kill-flavor.yml`** from disk into memory (manual YAML edits). Does not restart the process — scheduler **intervals** and some **channel/log paths** may still need a **full restart** to apply everywhere. |
 | `save` | RCON save. |
 | `unlink` | Remove this bot’s stored Discord↔Steam link (not in-game). |
 | `give` | Add points in the bot’s SQLite economy (not RCON). |

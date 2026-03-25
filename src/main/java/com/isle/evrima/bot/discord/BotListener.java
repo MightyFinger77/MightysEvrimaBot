@@ -46,7 +46,7 @@ import java.util.concurrent.ThreadLocalRandom;
  * Discord slash entrypoint. <b>Config persistence:</b> subcommands that alter settings defined in {@code config.yml}
  * must use {@link #applyYamlMutation} with {@link com.isle.evrima.bot.config.ConfigYamlUpdater} — never {@code bot_kv}
  * for those values. RCON-only admin actions and economy/link data are unaffected. **`/evrima-admin reload`**
- * calls {@link #reloadYamlFromDisk()} (config + taxonomy + scheduler hooks). When adding reload-sensitive
+ * calls {@link #reloadYamlFromDisk()} (config + taxonomy + kill-flavor + scheduler hooks). When adding reload-sensitive
  * components, extend {@link #applyYamlMutation} or {@link #reloadYamlFromDisk} as needed.
  */
 public final class BotListener extends ListenerAdapter {
@@ -302,7 +302,7 @@ public final class BotListener extends ListenerAdapter {
                                 reloadYamlFromDisk();
                                 database.appendAudit(event.getUser().getId(), "admin_config_reload", "");
                                 hookEditEphemeral(hook,
-                                        "Reloaded **`config.yml`** and **`species-taxonomy.yml`** from disk into memory.\n"
+                                        "Reloaded **`config.yml`**, **`species-taxonomy.yml`**, and **`kill-flavor.yml`** (when kill flavor is on) from disk into memory.\n"
                                                 + "Schedulers still use intervals/channel IDs from process start — **restart the bot** if you changed "
                                                 + "`database.path`, Discord token, or poll/topic/dashboard timing.\n"
                                                 + "Role checks and RCON settings apply immediately for new operations.");
@@ -996,7 +996,7 @@ public final class BotListener extends ListenerAdapter {
     }
 
     /**
-     * Reloads {@code config.yml} and {@code species-taxonomy.yml} like a Minecraft {@code /reload} — no process restart.
+     * Reloads {@code config.yml}, {@code species-taxonomy.yml}, and {@code kill-flavor.yml} (if flavor is enabled) — no process restart.
      */
     private void reloadYamlFromDisk() throws IOException {
         synchronized (live) {
