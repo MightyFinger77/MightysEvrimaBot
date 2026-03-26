@@ -4,6 +4,8 @@ import com.isle.evrima.bot.config.BotConfig;
 import com.isle.evrima.bot.config.KillFlavorPack;
 import com.isle.evrima.bot.config.LiveBotConfig;
 import com.isle.evrima.bot.db.Database;
+import com.isle.evrima.bot.dino.DinoParkLogoutAutosave;
+import com.isle.evrima.bot.rcon.RconService;
 import net.dv8tion.jda.api.JDA;
 import net.dv8tion.jda.api.entities.Message;
 import net.dv8tion.jda.api.entities.channel.concrete.TextChannel;
@@ -62,6 +64,20 @@ public final class IngameChatLogScheduler {
     private static final Pattern LOG_CHAT = Pattern.compile(
             "(?i)LogTheIsleChatData:\\s*\\[[^\\]]+\\]\\s+\\[([^\\]]+)\\]\\s+(?:\\[GROUP-[^\\]]+\\]\\s+)?(.+?)(?:\\s+\\[(7656119\\d{10})\\])?\\s*:\\s*(.*)");
 
+    /** {@code LogTheIsleJoinData: [when] Name [steam] …} — join/leave heuristics on tail text */
+    private static final Pattern LOG_JOIN_DATA = Pattern.compile(
+            "(?i)LogTheIsleJoinData:\\s*\\[[^\\]]+\\]\\s+(.+?)\\s+\\[(7656119\\d{10})\\]\\s*(.*)", Pattern.DOTALL);
+
+    /** Dedicated leave tag if your build logs it separately from {@link #LOG_JOIN_DATA}. */
+    private static final Pattern LOG_LEAVE_DATA = Pattern.compile(
+            "(?i)LogTheIsleLeaveData:\\s*\\[[^\\]]+\\]\\s+(.+?)\\s+\\[(7656119\\d{10})\\]\\s*(.*)", Pattern.DOTALL);
+
+    private static final Pattern STEAM_64 = Pattern.compile("(7656119\\d{10})");
+
+    /** Leave / disconnect phrasing inside JoinData lines on some Evrima builds. */
+    private static final Pattern LEAVE_HINT = Pattern.compile(
+            "(?i)left the server|disconnect|disconnected|safelog|logging out|logged out");
+
     /** {@code LogTheIsleKillData: [when] Name [steam] …} */
     private static final Pattern LOG_KILL = Pattern.compile(
             "(?i)LogTheIsleKillData:\\s*\\[[^\\]]+\\]\\s+(.+?)\\s+\\[(7656119\\d{10})\\]\\s*(.*)", Pattern.DOTALL);
@@ -90,11 +106,13 @@ public final class IngameChatLogScheduler {
 
     private final LiveBotConfig live;
     private final Database database;
+    private final RconService rcon;
     private final StringBuilder incompleteLine = new StringBuilder();
 
-    public IngameChatLogScheduler(LiveBotConfig live, Database database) {
+    public IngameChatLogScheduler(LiveBotConfig live, Database database, RconService rcon) {
         this.live = Objects.requireNonNull(live, "live");
         this.database = Objects.requireNonNull(database, "database");
+        this.rcon = Objects.requireNonNull(rcon, "rcon");
     }
 
     public void start(JDA jda) {
@@ -164,7 +182,8 @@ public final class IngameChatLogScheduler {
         String chunk = new String(buf, StandardCharsets.UTF_8);
         incompleteLine.append(chunk);
 
-        List<String> toSend = extractMatchingLines(live.get().ingameChatLogLineContainsAny());
+        BotConfig cfg = live.get();
+        List<String> toSend = extractMatchingLines(cfg.ingameChatLogLineContainsAny(), cfg.dinoParkPurgeOnKillLog(), cfg);
 
         database.putBotKv(KV_PATH, absStr);
         database.putBotKv(KV_OFFSET, String.valueOf(offset));
@@ -196,7 +215,7 @@ public final class IngameChatLogScheduler {
         return storedOff;
     }
 
-    private List<String> extractMatchingLines(List<String> markers) {
+    private List<String> extractMatchingLines(List<String> markers, boolean purgeParkedOnKill, BotConfig cfg) {
         String s = incompleteLine.toString();
         int lastNl = s.lastIndexOf('\n');
         if (lastNl < 0) {
@@ -210,6 +229,21 @@ public final class IngameChatLogScheduler {
             if (raw.isEmpty()) {
                 continue;
             }
+            if (purgeParkedOnKill && raw.contains("LogTheIsleKillData")) {
+                KillLogVictimSteam.extractVictimSteamId64(raw).ifPresent(sid -> {
+                    try {
+                        int r = database.applyPurgeOnKillForVictimSteam(sid, cfg.dinoParkPurgeOnKillDeathsPerSlot());
+                        if (r == 1) {
+                            LOG.info("dino_park: removed session parking slot for victim SteamID {} (kill log)", sid);
+                        } else if (r == 0) {
+                            LOG.debug("dino_park: kill counted for victim SteamID {} (session slot kept until threshold)", sid);
+                        }
+                    } catch (SQLException e) {
+                        LOG.warn("dino_park: purge on kill failed for {}: {}", sid, e.toString());
+                    }
+                });
+            }
+            DinoParkLogoutAutosave.handleLogLine(raw, live, database, rcon);
             if (lineMatchesAnyMarker(raw, markers)) {
                 out.add(raw);
             }
@@ -283,11 +317,90 @@ public final class IngameChatLogScheduler {
             return truncateDiscord(line);
         }
 
+        Optional<String> jl = tryFormatJoinLeaveLine(t, config);
+        if (jl.isPresent()) {
+            return truncateDiscord(jl.get());
+        }
+
         return truncateDiscord(fallbackPrettyLog(t));
     }
 
     private static boolean useKillFlavor(BotConfig cfg) {
         return cfg != null && cfg.ingameChatLogKillFlavorEnabled() && cfg.killFlavorPack().hasAny();
+    }
+
+    /**
+     * Formats {@code LogTheIsleJoinData} / {@code LogTheIsleLeaveData} lines for Discord (optional templates from
+     * {@code join_quips} / {@code leave_quips} in kill-flavor.yml when kill flavor is enabled).
+     */
+    private static Optional<String> tryFormatJoinLeaveLine(String stripped, BotConfig config) {
+        if (!stripped.contains("LogTheIsleJoinData") && !stripped.contains("LogTheIsleLeaveData")) {
+            return Optional.empty();
+        }
+
+        Matcher leaveTag = LOG_LEAVE_DATA.matcher(stripped);
+        if (leaveTag.matches()) {
+            return Optional.of(buildJoinLeaveDiscord(
+                    leaveTag.group(1).trim(),
+                    leaveTag.group(2).trim(),
+                    leaveTag.group(3) == null ? "" : leaveTag.group(3).trim(),
+                    true,
+                    config));
+        }
+
+        Matcher joinTag = LOG_JOIN_DATA.matcher(stripped);
+        if (joinTag.matches()) {
+            String nameRaw = joinTag.group(1).trim();
+            String steam = joinTag.group(2).trim();
+            String tail = joinTag.group(3) == null ? "" : joinTag.group(3).trim();
+            boolean asLeave = LEAVE_HINT.matcher(stripped).find() || LEAVE_HINT.matcher(tail).find();
+            return Optional.of(buildJoinLeaveDiscord(nameRaw, steam, tail, asLeave, config));
+        }
+
+        Matcher sm = STEAM_64.matcher(stripped);
+        if (!sm.find()) {
+            return Optional.empty();
+        }
+        String steam = sm.group(1);
+        String nameGuess = stripped.replaceFirst("(?i)LogTheIsle(Join|Leave)Data:\\s*\\[[^\\]]+\\]\\s*", "");
+        nameGuess = nameGuess.replaceAll("\\[7656119\\d{10}\\]", "").trim();
+        if (nameGuess.length() > 80) {
+            nameGuess = nameGuess.substring(0, 77) + "…";
+        }
+        boolean leave = LEAVE_HINT.matcher(stripped).find();
+        return Optional.of(buildJoinLeaveDiscord(nameGuess.isEmpty() ? "Player" : nameGuess, steam, "", leave, config));
+    }
+
+    private static String buildJoinLeaveDiscord(
+            String nameRaw,
+            String steam64,
+            String tailRaw,
+            boolean leave,
+            BotConfig config
+    ) {
+        String player = escapeMd(nameRaw.trim());
+        String steam = escapeMd(steam64.trim());
+        Map<String, String> ph = new LinkedHashMap<>();
+        ph.put("player", player);
+        ph.put("steam", "`" + steam + "`");
+
+        if (useKillFlavor(config)) {
+            KillFlavorPack pack = config.killFlavorPack();
+            Optional<String> flavored = leave ? pack.rollLeaveLine(ph) : pack.rollJoinLine(ph);
+            if (flavored.isPresent()) {
+                return flavored.get();
+            }
+        }
+
+        String tail = tailRaw == null ? "" : escapeMd(tailRaw.trim());
+        if (leave) {
+            return tail.isEmpty()
+                    ? "**" + player + "** left the island"
+                    : "**" + player + "** left the island — " + tail;
+        }
+        return tail.isEmpty()
+                ? "**" + player + "** washed ashore"
+                : "**" + player + "** joined the island — " + tail;
     }
 
     private static String formatKillLine(String player, String tail, BotConfig config) {

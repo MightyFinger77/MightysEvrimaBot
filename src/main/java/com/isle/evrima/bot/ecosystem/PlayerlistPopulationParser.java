@@ -78,8 +78,9 @@ public final class PlayerlistPopulationParser {
 
         boolean useGreedy = shouldUseGreedy(nSeg, raw.length(), steam, declared, sumGreedy);
 
-        SteamWindowsResult sw = steam >= 3 ? classifySteamWindows(raw, taxonomy) : null;
-        boolean useSteamWindows = sw != null && sw.steamCount >= 3;
+        // Per-Steam slices work for 1+ IDs; the old ">= 3" gate left solo players with counts but no species.
+        SteamWindowsResult sw = steam >= 1 ? classifySteamWindows(raw, taxonomy) : null;
+        boolean useSteamWindows = sw != null && sw.steamCount >= 1;
 
         Map<String, Integer> speciesCounts;
         int unknownPlayers;
@@ -121,7 +122,9 @@ public final class PlayerlistPopulationParser {
             }
         } else {
             speciesCounts = fromLines;
-            unknownPlayers = unknownFromLines;
+            int refFromRows = sumLines + unknownFromLines;
+            int refHint = Math.max(Math.max(Math.max(nSeg, steam), declared), refFromRows);
+            unknownPlayers = Math.max(unknownFromLines, refHint - sumLines);
             carn = carnL;
             herb = herbL;
             omni = omniL;
@@ -146,13 +149,13 @@ public final class PlayerlistPopulationParser {
                 int chosenSteamHint = steam;
                 String note = null;
 
-                if (gsw.steamCount >= 3 && gswKnown > 0) {
+                if (gsw.steamCount >= 1 && gswKnown > 0) {
                     chosen = new LinkedHashMap<>(gsw.counts);
                     chosenUnknown = gsw.unknown;
                     chosenSteamHint = Math.max(steam, gsw.steamCount);
                     note = "Species breakdown from RCON **getplayerdata** (bulk, no Steam ID). Your **playerlist** had Steam IDs "
                             + "and display names only (no species field).";
-                } else if (greedyKnown >= 3 && greedyKnown > gswKnown) {
+                } else if (greedyKnown >= 1 && greedyKnown > gswKnown) {
                     chosen = new LinkedHashMap<>(gpGreedy);
                     chosenUnknown = Math.max(0, steam - greedyKnown);
                     note = "Species inferred from **getplayerdata** text (taxonomy pattern match). **playerlist** had no species rows.";
@@ -285,7 +288,7 @@ public final class PlayerlistPopulationParser {
             return true;
         }
         int ext = Math.max(steam, declared);
-        return ext > nSeg && sumGreedy >= 3;
+        return ext > nSeg && sumGreedy >= 1;
     }
 
     private static int countSteamId64(String raw) {
@@ -362,7 +365,7 @@ public final class PlayerlistPopulationParser {
         }
         int steamTokens = countSteamMatchesInText(idLine);
         int nameTokens = countCommaSeparatedTokens(nameLine);
-        if (nameTokens < 3) {
+        if (nameTokens < 1 || steamTokens < 1) {
             return Optional.empty();
         }
         int slack = Math.max(5, steamTokens / 15);
@@ -571,7 +574,7 @@ public final class PlayerlistPopulationParser {
                 tokens.add(t);
             }
         }
-        if (tokens.size() < 3) {
+        if (tokens.isEmpty()) {
             return false;
         }
         int hits = 0;
@@ -579,6 +582,10 @@ public final class PlayerlistPopulationParser {
             if (STEAM_ID64.matcher(t).matches()) {
                 hits++;
             }
+        }
+        // Few tokens: require every comma field to be a SteamID64 (avoids false positives on short junk lines).
+        if (tokens.size() < 3) {
+            return hits == tokens.size();
         }
         return hits >= tokens.size() * minRatio;
     }

@@ -1,5 +1,7 @@
 package com.isle.evrima.bot.db;
 
+import com.isle.evrima.bot.config.EconomyParkingSlotsConfig;
+import com.isle.evrima.bot.dino.ParkedDinoPayload;
 import com.isle.evrima.bot.ecosystem.PlayerlistPopulationParser;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -83,6 +85,11 @@ public final class Database implements AutoCloseable {
                       parked_at_epoch_sec INTEGER NOT NULL
                     )""");
             st.executeUpdate("CREATE INDEX IF NOT EXISTS idx_parked_owner ON parked_dinos(discord_user_id)");
+            st.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS economy_extra_parking_slots (
+                      discord_user_id TEXT NOT NULL PRIMARY KEY,
+                      extra_slots INTEGER NOT NULL DEFAULT 0
+                    )""");
             st.executeUpdate("""
                     CREATE TABLE IF NOT EXISTS bot_kv (
                       k TEXT NOT NULL PRIMARY KEY,
@@ -335,15 +342,74 @@ public final class Database implements AutoCloseable {
         List<ParkedRow> rows = new ArrayList<>();
         try (Connection c = open();
              PreparedStatement ps = c.prepareStatement(
-                     "SELECT id, label, parked_at_epoch_sec FROM parked_dinos WHERE discord_user_id = ? ORDER BY id DESC")) {
+                     "SELECT id, label, parked_at_epoch_sec, payload_json FROM parked_dinos WHERE discord_user_id = ? ORDER BY id DESC")) {
             ps.setString(1, discordUserId);
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
-                    rows.add(new ParkedRow(rs.getLong(1), rs.getString(2), rs.getLong(3)));
+                    String payload = rs.getString(4);
+                    String sum = ParkedDinoPayload.readSummaryFromStoredJson(payload).oneLine();
+                    rows.add(new ParkedRow(rs.getLong(1), rs.getString(2), rs.getLong(3), sum));
                 }
             }
         }
         return rows;
+    }
+
+    /**
+     * Deletes every parking slot tied to this SteamID64 (any Discord owner). Rare bulk op; clears per-slot KV keys.
+     *
+     * @return number of rows removed
+     */
+    public int deleteAllParkedForSteamId(String steamId64) throws SQLException {
+        if (steamId64 == null || steamId64.isBlank()) {
+            return 0;
+        }
+        String trim = steamId64.trim();
+        List<ParkOwnerRow> rows = new ArrayList<>();
+        try (Connection c = open();
+             PreparedStatement sel = c.prepareStatement(
+                     "SELECT id, discord_user_id FROM parked_dinos WHERE steam_id64 = ?")) {
+            sel.setString(1, trim);
+            try (ResultSet rs = sel.executeQuery()) {
+                while (rs.next()) {
+                    rows.add(new ParkOwnerRow(rs.getLong(1), rs.getString(2)));
+                }
+            }
+        }
+        if (rows.isEmpty()) {
+            return 0;
+        }
+        try (Connection c = open();
+             PreparedStatement del = c.prepareStatement("DELETE FROM parked_dinos WHERE steam_id64 = ?")) {
+            del.setString(1, trim);
+            int n = del.executeUpdate();
+            for (ParkOwnerRow r : rows) {
+                clearParkSlotAuxiliaryKv(r.discordUserId(), r.id());
+            }
+            return n;
+        }
+    }
+
+    public record ParkOwnerRow(long id, String discordUserId) {}
+
+    public Optional<ParkedFullRow> findParked(long id, String discordUserId) throws SQLException {
+        try (Connection c = open();
+             PreparedStatement ps = c.prepareStatement(
+                     "SELECT steam_id64, label, payload_json, parked_at_epoch_sec FROM parked_dinos WHERE id = ? AND discord_user_id = ?")) {
+            ps.setLong(1, id);
+            ps.setString(2, discordUserId);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    return Optional.of(new ParkedFullRow(
+                            id,
+                            rs.getString(1),
+                            rs.getString(2),
+                            rs.getString(3),
+                            rs.getLong(4)));
+                }
+            }
+        }
+        return Optional.empty();
     }
 
     public boolean deleteParked(long id, String discordUserId) throws SQLException {
@@ -352,11 +418,88 @@ public final class Database implements AutoCloseable {
                      "DELETE FROM parked_dinos WHERE id = ? AND discord_user_id = ?")) {
             ps.setLong(1, id);
             ps.setString(2, discordUserId);
-            return ps.executeUpdate() == 1;
+            boolean ok = ps.executeUpdate() == 1;
+            if (ok) {
+                clearParkSlotAuxiliaryKv(discordUserId, id);
+            }
+            return ok;
         }
     }
 
-    public record ParkedRow(long id, String label, long parkedAtEpochSec) {}
+    private static final String KV_PARK_KILL_DEATHS = "park_kill_deaths:";
+    private static final String KV_PARK_RETRIEVE_LAST = "park_retrieve_last:";
+
+    /** Clears kill-death counter + retrieve cooldown for a parking slot (bot_kv). */
+    public void clearParkSlotAuxiliaryKv(String discordUserId, long slotId) throws SQLException {
+        deleteBotKv(KV_PARK_KILL_DEATHS + discordUserId + ":" + slotId);
+        deleteBotKv(KV_PARK_RETRIEVE_LAST + discordUserId + ":" + slotId);
+    }
+
+    public void clearParkKillDeathCount(String discordUserId, long slotId) throws SQLException {
+        deleteBotKv(KV_PARK_KILL_DEATHS + discordUserId + ":" + slotId);
+    }
+
+    public long getParkRetrieveLastEpochSec(String discordUserId, long slotId) throws SQLException {
+        return getBotKvLong(KV_PARK_RETRIEVE_LAST + discordUserId + ":" + slotId).orElse(0L);
+    }
+
+    public void setParkRetrieveLastEpochSec(String discordUserId, long slotId, long epochSec) throws SQLException {
+        putBotKv(KV_PARK_RETRIEVE_LAST + discordUserId + ":" + slotId, String.valueOf(epochSec));
+    }
+
+    /**
+     * Kill log purge: only the linked Discord user’s <b>session</b> slot (last park/retrieve) for this SteamID.
+     *
+     * @return 1 if a slot was removed, 0 if a death was counted but the slot remains, -1 if no action
+     */
+    public int applyPurgeOnKillForVictimSteam(String victimSteamId64, int deathsRequiredBeforeRemove) throws SQLException {
+        if (victimSteamId64 == null || victimSteamId64.isBlank()) {
+            return -1;
+        }
+        String victim = victimSteamId64.trim();
+        int need = Math.max(1, deathsRequiredBeforeRemove);
+        Optional<String> discordOpt = findDiscordForSteam(victim);
+        if (discordOpt.isEmpty()) {
+            return -1;
+        }
+        String discord = discordOpt.get();
+        OptionalLong session = getParkSessionSlot(discord);
+        if (session.isEmpty()) {
+            return -1;
+        }
+        long slotId = session.getAsLong();
+        Optional<ParkedFullRow> row = findParked(slotId, discord);
+        if (row.isEmpty()) {
+            return -1;
+        }
+        if (!victim.equals(row.get().steamId64().trim())) {
+            return -1;
+        }
+        String k = KV_PARK_KILL_DEATHS + discord + ":" + slotId;
+        int prev = 0;
+        Optional<String> prevS = getBotKv(k);
+        if (prevS.isPresent()) {
+            try {
+                prev = Integer.parseInt(prevS.get().trim());
+            } catch (NumberFormatException ignored) {
+                prev = 0;
+            }
+        }
+        int next = prev + 1;
+        if (next >= need) {
+            if (deleteParked(slotId, discord)) {
+                reconcileParkSessionAfterDelete(discord, slotId);
+                return 1;
+            }
+            return -1;
+        }
+        putBotKv(k, String.valueOf(next));
+        return 0;
+    }
+
+    public record ParkedRow(long id, String label, long parkedAtEpochSec, String snapshotSummary) {}
+
+    public record ParkedFullRow(long id, String steamId64, String label, String payloadJson, long parkedAtEpochSec) {}
 
     public Optional<String> getBotKv(String key) throws SQLException {
         try (Connection c = open();
@@ -400,6 +543,169 @@ public final class Database implements AutoCloseable {
              PreparedStatement ps = c.prepareStatement("DELETE FROM bot_kv WHERE k = ?")) {
             ps.setString(1, key);
             ps.executeUpdate();
+        }
+    }
+
+    private static final String KV_PARK_SESSION_SLOT = "park_session_slot:";
+
+    public int countParkedSlots(String discordUserId) throws SQLException {
+        try (Connection c = open();
+             PreparedStatement ps = c.prepareStatement(
+                     "SELECT COUNT(*) FROM parked_dinos WHERE discord_user_id = ?")) {
+            ps.setString(1, discordUserId);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? rs.getInt(1) : 0;
+            }
+        }
+    }
+
+    /** Purchased parking capacity beyond {@link EconomyParkingSlotsConfig#defaultSlots()}. */
+    public int getExtraParkingSlots(String discordUserId) throws SQLException {
+        try (Connection c = open();
+             PreparedStatement ps = c.prepareStatement(
+                     "SELECT extra_slots FROM economy_extra_parking_slots WHERE discord_user_id = ?")) {
+            ps.setString(1, discordUserId);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? Math.max(0, rs.getInt(1)) : 0;
+            }
+        }
+    }
+
+    public record ParkingSlotPurchaseResult(boolean ok, String errorMessage, int pointsSpent, int extraSlotsNow) {
+        public static ParkingSlotPurchaseResult failure(String message) {
+            return new ParkingSlotPurchaseResult(false, message, 0, 0);
+        }
+
+        public static ParkingSlotPurchaseResult success(int spent, int extraNow) {
+            return new ParkingSlotPurchaseResult(true, "", spent, extraNow);
+        }
+    }
+
+    /**
+     * Buys +1 parking slot capacity (atomic balance check + increment). Caller must pass {@code cfg.enabled() == true}
+     * for meaningful purchases; still validates enabled to avoid accidents.
+     */
+    public ParkingSlotPurchaseResult purchaseParkingExtraSlot(String discordUserId, EconomyParkingSlotsConfig cfg)
+            throws SQLException {
+        if (!cfg.enabled()) {
+            return ParkingSlotPurchaseResult.failure("Parking slot purchases are disabled in config.");
+        }
+        try (Connection c = open()) {
+            c.setAutoCommit(false);
+            try {
+                int extra;
+                try (PreparedStatement sel = c.prepareStatement(
+                        "SELECT extra_slots FROM economy_extra_parking_slots WHERE discord_user_id = ?")) {
+                    sel.setString(1, discordUserId);
+                    try (ResultSet rs = sel.executeQuery()) {
+                        extra = rs.next() ? Math.max(0, rs.getInt(1)) : 0;
+                    }
+                }
+                if (cfg.defaultSlots() + extra >= cfg.maxSlots()) {
+                    c.rollback();
+                    return ParkingSlotPurchaseResult.failure(
+                            "You already have the maximum number of parking slots (**" + cfg.maxSlots() + "**).");
+                }
+                int cost = cfg.priceForNextExtraSlot(extra);
+                try (PreparedStatement insBal = c.prepareStatement(
+                        "INSERT OR IGNORE INTO economy_balance(discord_user_id, balance) VALUES(?,0)")) {
+                    insBal.setString(1, discordUserId);
+                    insBal.executeUpdate();
+                }
+                try (PreparedStatement spend = c.prepareStatement(
+                        "UPDATE economy_balance SET balance = balance - ? WHERE discord_user_id = ? AND balance >= ?")) {
+                    spend.setInt(1, cost);
+                    spend.setString(2, discordUserId);
+                    spend.setInt(3, cost);
+                    if (spend.executeUpdate() != 1) {
+                        int bal = readBalanceInTransaction(c, discordUserId);
+                        c.rollback();
+                        return ParkingSlotPurchaseResult.failure(
+                                "You need **" + cost + "** points (balance **" + bal + "**).");
+                    }
+                }
+                try (PreparedStatement up = c.prepareStatement(
+                        """
+                                INSERT INTO economy_extra_parking_slots(discord_user_id, extra_slots) VALUES(?,1)
+                                ON CONFLICT(discord_user_id) DO UPDATE SET extra_slots = extra_slots + 1
+                                """)) {
+                    up.setString(1, discordUserId);
+                    up.executeUpdate();
+                }
+                c.commit();
+                return ParkingSlotPurchaseResult.success(cost, extra + 1);
+            } catch (SQLException e) {
+                c.rollback();
+                throw e;
+            } finally {
+                c.setAutoCommit(true);
+            }
+        }
+    }
+
+    private static int readBalanceInTransaction(Connection c, String discordUserId) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement("SELECT balance FROM economy_balance WHERE discord_user_id = ?")) {
+            ps.setString(1, discordUserId);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? rs.getInt(1) : 0;
+            }
+        }
+    }
+
+    public OptionalLong latestParkedIdForDiscord(String discordUserId) throws SQLException {
+        try (Connection c = open();
+             PreparedStatement ps = c.prepareStatement(
+                     "SELECT id FROM parked_dinos WHERE discord_user_id = ? ORDER BY id DESC LIMIT 1")) {
+            ps.setString(1, discordUserId);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? OptionalLong.of(rs.getLong(1)) : OptionalLong.empty();
+            }
+        }
+    }
+
+    /**
+     * Updates payload and timestamp for an owned slot (logout autosave).
+     *
+     * @return true if exactly one row updated
+     */
+    public boolean updateParkedPayload(long id, String discordUserId, String payloadJson, long parkedAtEpochSec)
+            throws SQLException {
+        try (Connection c = open();
+             PreparedStatement ps = c.prepareStatement("""
+                     UPDATE parked_dinos SET payload_json = ?, parked_at_epoch_sec = ?
+                     WHERE id = ? AND discord_user_id = ?
+                     """)) {
+            ps.setString(1, payloadJson);
+            ps.setLong(2, parkedAtEpochSec);
+            ps.setLong(3, id);
+            ps.setString(4, discordUserId);
+            return ps.executeUpdate() == 1;
+        }
+    }
+
+    public OptionalLong getParkSessionSlot(String discordUserId) throws SQLException {
+        return getBotKvLong(KV_PARK_SESSION_SLOT + discordUserId);
+    }
+
+    public void setParkSessionSlot(String discordUserId, long slotId) throws SQLException {
+        putBotKv(KV_PARK_SESSION_SLOT + discordUserId, String.valueOf(slotId));
+    }
+
+    public void clearParkSessionSlot(String discordUserId) throws SQLException {
+        deleteBotKv(KV_PARK_SESSION_SLOT + discordUserId);
+    }
+
+    /** If the deleted slot was the “session” slot, point session at latest parked row or clear. */
+    public void reconcileParkSessionAfterDelete(String discordUserId, long deletedId) throws SQLException {
+        OptionalLong cur = getParkSessionSlot(discordUserId);
+        if (cur.isEmpty() || cur.getAsLong() != deletedId) {
+            return;
+        }
+        OptionalLong latest = latestParkedIdForDiscord(discordUserId);
+        if (latest.isEmpty()) {
+            clearParkSessionSlot(discordUserId);
+        } else {
+            setParkSessionSlot(discordUserId, latest.getAsLong());
         }
     }
 

@@ -1,5 +1,6 @@
 package com.isle.evrima.bot.schedule;
 
+import com.isle.evrima.bot.config.AdaptiveAiDensityBandMode;
 import com.isle.evrima.bot.config.AdaptiveAiDensityTier;
 import com.isle.evrima.bot.config.BotConfig;
 import com.isle.evrima.bot.config.LiveBotConfig;
@@ -22,7 +23,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * Sets RCON {@code aidensity} from configured population tiers vs {@code max_players}.
+ * Sets RCON {@code aidensity} from configured population tiers. Bounds are either fill % of {@code max_players}
+ * ({@link AdaptiveAiDensityBandMode#PERCENT}) or raw online player counts ({@link AdaptiveAiDensityBandMode#AMOUNT}).
  */
 public final class AdaptiveAiDensityScheduler {
 
@@ -55,9 +57,10 @@ public final class AdaptiveAiDensityScheduler {
         if (!config.adaptiveAiDensityEnabled()) {
             return;
         }
+        AdaptiveAiDensityBandMode mode = config.adaptiveAiDensityBandMode();
         int max = config.adaptiveAiDensityMaxPlayers();
-        if (max <= 0) {
-            LOG.warn("adaptive_ai_density: enabled but max_players invalid — scheduler not started");
+        if (mode == AdaptiveAiDensityBandMode.PERCENT && max <= 0) {
+            LOG.warn("adaptive_ai_density: enabled (percent mode) but max_players invalid — scheduler not started");
             return;
         }
         int minutes = Math.max(1, config.adaptiveAiDensityIntervalMinutes());
@@ -67,8 +70,13 @@ public final class AdaptiveAiDensityScheduler {
             return t;
         });
         ex.scheduleAtFixedRate(this::runSafe, 58, minutes * 60L, TimeUnit.SECONDS);
-        LOG.info("Adaptive AI density: every {} min (max_players={}, {} tier(s))",
-                minutes, max, config.adaptiveAiDensityTiers().size());
+        if (mode == AdaptiveAiDensityBandMode.PERCENT) {
+            LOG.info("Adaptive AI density: every {} min (band_mode=percent, max_players={}, {} tier(s))",
+                    minutes, max, config.adaptiveAiDensityTiers().size());
+        } else {
+            LOG.info("Adaptive AI density: every {} min (band_mode=amount, by online player count; max_players={} unused for tiers, {} tier(s))",
+                    minutes, max, config.adaptiveAiDensityTiers().size());
+        }
     }
 
     private void runSafe() {
@@ -88,23 +96,38 @@ public final class AdaptiveAiDensityScheduler {
         if (!config.adaptiveAiDensityEnabled()) {
             return;
         }
+        AdaptiveAiDensityBandMode mode = config.adaptiveAiDensityBandMode();
         int maxPlayers = config.adaptiveAiDensityMaxPlayers();
-        if (maxPlayers <= 0) {
+        if (mode == AdaptiveAiDensityBandMode.PERCENT && maxPlayers <= 0) {
             return;
         }
 
         PopulationDashboardService.SnapshotResult res = population.snapshot(true);
         int players = Math.max(0, res.data().referencePlayerTotal());
         rconGuard.observeHealthy();
-        int fillPct = (int) Math.min(100L, Math.floor(100.0 * (double) players / (double) maxPlayers));
 
         List<AdaptiveAiDensityTier> tiers = config.adaptiveAiDensityTiers();
-        Optional<AdaptiveAiDensityTier> tier = AdaptiveAiDensityTier.match(fillPct, tiers);
-        if (tier.isEmpty()) {
-            if (warnedNoTier.compareAndSet(false, true)) {
-                LOG.warn("adaptive_ai_density: no tier matched fill {}% (check tiers cover 0–100)", fillPct);
+        Optional<AdaptiveAiDensityTier> tier;
+        int fillPct = 0;
+        if (mode == AdaptiveAiDensityBandMode.PERCENT) {
+            fillPct = (int) Math.min(100L, Math.floor(100.0 * (double) players / (double) maxPlayers));
+            tier = AdaptiveAiDensityTier.matchPercent(fillPct, tiers);
+            if (tier.isEmpty()) {
+                if (warnedNoTier.compareAndSet(false, true)) {
+                    LOG.warn("adaptive_ai_density: no tier matched fill {}% (check tiers cover 0–100)", fillPct);
+                }
+                return;
             }
-            return;
+        } else {
+            tier = AdaptiveAiDensityTier.matchPlayers(players, tiers);
+            if (tier.isEmpty()) {
+                if (warnedNoTier.compareAndSet(false, true)) {
+                    LOG.warn(
+                            "adaptive_ai_density: no tier matched {} online players (amount mode — extend tier max_players)",
+                            players);
+                }
+                return;
+            }
         }
         warnedNoTier.set(false);
 
@@ -127,15 +150,25 @@ public final class AdaptiveAiDensityScheduler {
         }
         rcon.run(EvrimaRcon.lineAidensity(target));
         database.putBotKv(KV_LAST_DENSITY, BigDecimal.valueOf(target).stripTrailingZeros().toPlainString());
-        LOG.info(
-                "adaptive_ai_density (scheduler, automatic): AI density changed — fill {}% (tier {}–{}% → multiplier {}) — "
-                        + "{} players / max {} — RCON {}",
-                fillPct,
-                band.minPercentInclusive(),
-                band.maxPercentInclusive(),
-                BigDecimal.valueOf(target).stripTrailingZeros().toPlainString(),
-                players,
-                maxPlayers,
-                EvrimaRcon.lineAidensity(target));
+        if (mode == AdaptiveAiDensityBandMode.PERCENT) {
+            LOG.info(
+                    "adaptive_ai_density (scheduler, automatic): AI density changed — fill {}% (tier {}–{}% → multiplier {}) — "
+                            + "{} players / max {} — RCON {}",
+                    fillPct,
+                    band.minInclusive(),
+                    band.maxInclusive(),
+                    BigDecimal.valueOf(target).stripTrailingZeros().toPlainString(),
+                    players,
+                    maxPlayers,
+                    EvrimaRcon.lineAidensity(target));
+        } else {
+            LOG.info(
+                    "adaptive_ai_density (scheduler, automatic): AI density changed — {} players (tier {}–{} → multiplier {}) — RCON {}",
+                    players,
+                    band.minInclusive(),
+                    band.maxInclusive(),
+                    BigDecimal.valueOf(target).stripTrailingZeros().toPlainString(),
+                    EvrimaRcon.lineAidensity(target));
+        }
     }
 }

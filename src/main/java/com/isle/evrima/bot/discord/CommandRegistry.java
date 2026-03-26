@@ -28,6 +28,8 @@ public final class CommandRegistry {
     /** Everyone: linking, account, economy (balance/spin), dino slots. */
     private static CommandData publicEvrima() {
         return Commands.slash("evrima", "The Isle Evrima — linking, economy, parking (public)")
+                .addSubcommands(
+                        new SubcommandData("help", "Player commands — link, economy, dino park, ecosystem"))
                 .addSubcommandGroups(
                         new SubcommandGroupData("link", "Steam account linking")
                                 .addSubcommands(
@@ -44,16 +46,18 @@ public final class CommandRegistry {
                         new SubcommandGroupData("eco", "Economy")
                                 .addSubcommands(
                                         new SubcommandData("balance", "Check your points"),
-                                        new SubcommandData("spin", "Daily spin (once per UTC day)")
+                                        new SubcommandData("spin", "Daily spin (once per UTC day)"),
+                                        new SubcommandData("parking", "Parking slot usage and next purchase price (when economy.parking_slots is enabled)"),
+                                        new SubcommandData("parking-buy", "Buy +1 parking slot with points (when economy.parking_slots is enabled)")
                                 ),
-                        new SubcommandGroupData("dino", "Parking slots (metadata)")
+                        new SubcommandGroupData("dino", "Park dino — RCON snapshot + optional on-disk player file capture/restore")
                                 .addSubcommands(
-                                        new SubcommandData("park", "Save a parking slot entry")
+                                        new SubcommandData("park", "Save your current in-game character (RCON getplayerdata)")
                                                 .addOption(OptionType.STRING, "label", "Label shown in lists", false),
                                         new SubcommandData("list", "List your parking slots"),
                                         new SubcommandData("delete", "Delete a parking slot by id")
                                                 .addOption(OptionType.INTEGER, "id", "Id from /evrima dino list", true),
-                                        new SubcommandData("retrieve", "Placeholder until game restore exists")
+                                        new SubcommandData("retrieve", "Show snapshot; may restore server player file (see config dino_park.playerdata_file)")
                                                 .addOption(OptionType.INTEGER, "id", "Id from /evrima dino list", true)
                                 ),
                         new SubcommandGroupData("ecosystem", "Population dashboard (RCON playerlist + species taxonomy)")
@@ -69,6 +73,7 @@ public final class CommandRegistry {
     private static CommandData modEvrima() {
         return Commands.slash("evrima-mod", "Moderation — whois, Discord timeouts (bot checks config roles)")
                 .addSubcommands(
+                        new SubcommandData("adminhelp", "Staff/admin slash commands (moderator+); no secrets"),
                         new SubcommandData("whois", "Linked Steam + getplayerdata — Discord **or** in-game / SteamID")
                                 .addOption(OptionType.USER, "user", "Discord user (leave empty if you use player)", false)
                                 .addOption(OptionType.STRING, "player", "SteamID64 or in-game name from live playerlist (omit if you use user)", false),

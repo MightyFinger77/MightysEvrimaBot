@@ -216,7 +216,7 @@ public final class EvrimaRcon implements AutoCloseable {
                 headerLine = line;
                 continue;
             }
-            Optional<String> pid = playerIdFromGetplayerdataLine(line);
+            Optional<String> pid = steamIdFromPlayerdataLine(line);
             if (pid.isPresent() && target.equals(pid.get())) {
                 bodyMatches.add(line);
             }
@@ -232,6 +232,11 @@ public final class EvrimaRcon implements AutoCloseable {
             sb.append(b).append('\n');
         }
         return sb.toString().trim();
+    }
+
+    /** Parses SteamID64 from a single getplayerdata line (PlayerID: ...). */
+    public static Optional<String> steamIdFromPlayerdataLine(String line) {
+        return playerIdFromGetplayerdataLine(line);
     }
 
     private static Optional<String> playerIdFromGetplayerdataLine(String line) {

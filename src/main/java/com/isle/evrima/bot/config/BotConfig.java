@@ -52,11 +52,13 @@ public final class BotConfig {
      * {@link #serverStatusTopicChannelIds()} has 2+ ids. Discord’s shared guild bucket often returns Retry-After ~180s.
      */
     private final int serverStatusTopicMultiChannelStaggerSeconds;
-    /** Periodically set RCON {@code aidensity} from online % of {@link #adaptiveAiDensityMaxPlayers()}. */
+    /** Periodically set RCON {@code aidensity} from configured population bands. */
     private final boolean adaptiveAiDensityEnabled;
     private final int adaptiveAiDensityIntervalMinutes;
-    /** Slot cap used only for fill %; required when adaptive AI density is enabled. */
+    /** Slot cap used only for fill %; required when adaptive AI density is enabled in percent mode. */
     private final int adaptiveAiDensityMaxPlayers;
+    /** {@code percent} = tier bounds are fill % of {@link #adaptiveAiDensityMaxPlayers()}; {@code amount} = raw online counts. */
+    private final AdaptiveAiDensityBandMode adaptiveAiDensityBandMode;
     private final List<AdaptiveAiDensityTier> adaptiveAiDensityTiers;
     /** Dynamically remove/add species from playables list based on live counts. */
     private final boolean speciesPopulationControlEnabled;
@@ -98,6 +100,15 @@ public final class BotConfig {
     /** Absolute path used to load {@link #killFlavorPack()} (for logging / troubleshooting). */
     private final Path killFlavorYamlPath;
     private final KillFlavorPack killFlavorPack;
+    /** When true, {@code LogTheIsleKillData} lines can purge the victim’s <b>session</b> parking slot only (see deaths + retrieve cooldown keys). */
+    private final boolean dinoParkPurgeOnKillLog;
+    /** Kill log deaths required before that session slot is removed ({@code >= 1}). */
+    private final int dinoParkPurgeOnKillDeathsPerSlot;
+    /** Min seconds between {@code /evrima dino retrieve} per slot; 0 = off. */
+    private final int dinoParkRetrieveCooldownSeconds;
+    private final DinoParkPlayerdataFile dinoParkPlayerdataFile;
+    private final DinoParkLogoutAutosaveConfig dinoParkLogoutAutosave;
+    private final EconomyParkingSlotsConfig economyParkingSlots;
 
     public BotConfig(
             String discordToken,
@@ -127,6 +138,7 @@ public final class BotConfig {
             boolean adaptiveAiDensityEnabled,
             int adaptiveAiDensityIntervalMinutes,
             int adaptiveAiDensityMaxPlayers,
+            AdaptiveAiDensityBandMode adaptiveAiDensityBandMode,
             List<AdaptiveAiDensityTier> adaptiveAiDensityTiers,
             boolean speciesPopulationControlEnabled,
             int speciesPopulationControlIntervalSeconds,
@@ -148,6 +160,12 @@ public final class BotConfig {
             boolean ingameChatLogKillFlavorEnabled,
             Path killFlavorYamlPath,
             KillFlavorPack killFlavorPack,
+            boolean dinoParkPurgeOnKillLog,
+            int dinoParkPurgeOnKillDeathsPerSlot,
+            int dinoParkRetrieveCooldownSeconds,
+            DinoParkPlayerdataFile dinoParkPlayerdataFile,
+            DinoParkLogoutAutosaveConfig dinoParkLogoutAutosave,
+            EconomyParkingSlotsConfig economyParkingSlots,
             Path configYamlPath
     ) {
         this.discordToken = discordToken;
@@ -178,6 +196,9 @@ public final class BotConfig {
         this.adaptiveAiDensityEnabled = adaptiveAiDensityEnabled;
         this.adaptiveAiDensityIntervalMinutes = adaptiveAiDensityIntervalMinutes;
         this.adaptiveAiDensityMaxPlayers = adaptiveAiDensityMaxPlayers;
+        this.adaptiveAiDensityBandMode = adaptiveAiDensityBandMode == null
+                ? AdaptiveAiDensityBandMode.PERCENT
+                : adaptiveAiDensityBandMode;
         this.adaptiveAiDensityTiers = List.copyOf(adaptiveAiDensityTiers);
         this.speciesPopulationControlEnabled = speciesPopulationControlEnabled;
         this.speciesPopulationControlIntervalSeconds = speciesPopulationControlIntervalSeconds;
@@ -201,6 +222,30 @@ public final class BotConfig {
                 ? Path.of("kill-flavor.yml")
                 : killFlavorYamlPath.toAbsolutePath().normalize();
         this.killFlavorPack = Objects.requireNonNull(killFlavorPack, "killFlavorPack");
+        this.dinoParkPurgeOnKillLog = dinoParkPurgeOnKillLog;
+        int pkd = dinoParkPurgeOnKillDeathsPerSlot;
+        if (pkd < 1) {
+            pkd = 1;
+        }
+        if (pkd > 999) {
+            pkd = 999;
+        }
+        this.dinoParkPurgeOnKillDeathsPerSlot = pkd;
+        int rcd = dinoParkRetrieveCooldownSeconds;
+        if (rcd < 0) {
+            rcd = 0;
+        }
+        if (rcd > 604_800) {
+            rcd = 604_800;
+        }
+        this.dinoParkRetrieveCooldownSeconds = rcd;
+        this.dinoParkPlayerdataFile = dinoParkPlayerdataFile == null
+                ? DinoParkPlayerdataFile.DISABLED
+                : dinoParkPlayerdataFile;
+        this.dinoParkLogoutAutosave = dinoParkLogoutAutosave == null
+                ? DinoParkLogoutAutosaveConfig.DISABLED
+                : dinoParkLogoutAutosave;
+        this.economyParkingSlots = economyParkingSlots != null ? economyParkingSlots : EconomyParkingSlotsConfig.DISABLED;
     }
 
     @SuppressWarnings("unchecked")
@@ -255,6 +300,14 @@ public final class BotConfig {
         Map<String, Object> eco = mapOrEmpty(root.get("economy"));
         int spinMin = (int) parseLong(eco.get("daily_spin_min"), 10L);
         int spinMax = (int) parseLong(eco.get("daily_spin_max"), 250L);
+        Map<String, Object> parkEco = mapOrEmpty(eco.get("parking_slots"));
+        boolean parkSlotsEn = parseBooleanYaml(parkEco.get("enabled"), false);
+        int parkDef = (int) parseLong(parkEco.get("default_slots"), 1L);
+        int parkMax = (int) parseLong(parkEco.get("max_slots"), 10L);
+        int parkBase = (int) parseLong(parkEco.get("base_price_per_slot"), 500L);
+        double parkMult = parseDoubleYaml(parkEco.get("price_multiplier"), 1.15);
+        EconomyParkingSlotsConfig economyParkingSlots =
+                new EconomyParkingSlotsConfig(parkSlotsEn, parkDef, parkMax, parkBase, parkMult);
 
         Map<String, Object> ecosystem = mapOrEmpty(root.get("ecosystem"));
         String ecoTitle = stringOrEmpty(ecosystem.get("title"));
@@ -301,9 +354,12 @@ public final class BotConfig {
         if (aaMaxPlayers < 0) {
             aaMaxPlayers = 0;
         }
-        List<AdaptiveAiDensityTier> aaTiers = parseAdaptiveAiDensityTiers(adaptiveAi.get("tiers"));
-        if (aaEnabled && aaMaxPlayers <= 0) {
-            throw new IOException("adaptive_ai_density.enabled is true but max_players must be > 0 (server slot cap for fill %).");
+        AdaptiveAiDensityBandMode aaBandMode = AdaptiveAiDensityBandMode.parseYaml(adaptiveAi.get("band_mode"));
+        List<AdaptiveAiDensityTier> aaTiers =
+                parseAdaptiveAiDensityTiers(adaptiveAi.get("tiers"), aaBandMode);
+        if (aaEnabled && aaBandMode == AdaptiveAiDensityBandMode.PERCENT && aaMaxPlayers <= 0) {
+            throw new IOException(
+                    "adaptive_ai_density.enabled is true with band_mode percent but max_players must be > 0 (slot cap for fill %).");
         }
 
         Map<String, Object> speciesControl = mapOrEmpty(root.get("species_population_control"));
@@ -390,6 +446,26 @@ public final class BotConfig {
             }
         }
 
+        Map<String, Object> dinoPark = mapOrEmpty(root.get("dino_park"));
+        boolean dinoParkPurgeKill = parseBooleanYaml(dinoPark.get("purge_on_kill_log"), true);
+        int dinoParkPurgeKillDeaths = (int) parseLong(dinoPark.get("purge_on_kill_deaths_per_slot"), 1L);
+        int dinoParkRetrieveCd = (int) parseLong(dinoPark.get("retrieve_cooldown_seconds"), 0L);
+        Map<String, Object> pdfMap = mapOrEmpty(dinoPark.get("playerdata_file"));
+        boolean pdfEnabled = parseBooleanYaml(pdfMap.get("enabled"), false);
+        String pdfTemplate = stringOrEmpty(pdfMap.get("path_template"));
+        boolean pdfCapture = parseBooleanYaml(pdfMap.get("capture_file_on_park"), true);
+        boolean pdfRestore = parseBooleanYaml(pdfMap.get("restore_from_capture_on_retrieve"), true);
+        DinoParkPlayerdataFile dinoParkPdf = new DinoParkPlayerdataFile(
+                pdfEnabled, pdfTemplate, pdfCapture, pdfRestore);
+
+        Map<String, Object> logoutAutosave = mapOrEmpty(dinoPark.get("logout_autosave"));
+        boolean loEn = parseBooleanYaml(logoutAutosave.get("enabled"), false);
+        List<String> loSoft = parseYamlStringList(logoutAutosave.get("soft_logout_line_contains"));
+        List<String> loHard = parseYamlStringList(logoutAutosave.get("hard_disconnect_line_contains"));
+        int loHardDelay = (int) parseLong(logoutAutosave.get("hard_disconnect_delay_seconds"), 300L);
+        DinoParkLogoutAutosaveConfig loCfg =
+                new DinoParkLogoutAutosaveConfig(loEn, loSoft, loHard, loHardDelay);
+
         return new BotConfig(
                 token,
                 guildId,
@@ -418,6 +494,7 @@ public final class BotConfig {
                 aaEnabled,
                 aaInterval,
                 aaMaxPlayers,
+                aaBandMode,
                 aaTiers,
                 spEnabled,
                 spIntervalSec,
@@ -439,6 +516,12 @@ public final class BotConfig {
                 killFlavorEnabled,
                 killFlavorYaml,
                 killPack,
+                dinoParkPurgeKill,
+                dinoParkPurgeKillDeaths,
+                dinoParkRetrieveCd,
+                dinoParkPdf,
+                loCfg,
+                economyParkingSlots,
                 yamlFile.toAbsolutePath().normalize()
         );
     }
@@ -478,7 +561,26 @@ public final class BotConfig {
     }
 
     private static List<String> defaultLogLineMarkers() {
-        return List.of("LogTheIsleChatData", "LogTheIsleKillData");
+        return List.of("LogTheIsleChatData", "LogTheIsleKillData", "LogTheIsleJoinData");
+    }
+
+    /** YAML string or list of strings; blanks skipped. */
+    private static List<String> parseYamlStringList(Object v) {
+        if (v == null) {
+            return List.of();
+        }
+        if (v instanceof List<?> list) {
+            List<String> out = new ArrayList<>();
+            for (Object o : list) {
+                String s = stringOrEmpty(o);
+                if (!s.isBlank()) {
+                    out.add(s);
+                }
+            }
+            return List.copyOf(out);
+        }
+        String single = stringOrEmpty(v);
+        return single.isBlank() ? List.of() : List.of(single);
     }
 
     /**
@@ -587,24 +689,42 @@ public final class BotConfig {
     }
 
     @SuppressWarnings("unchecked")
-    private static List<AdaptiveAiDensityTier> parseAdaptiveAiDensityTiers(Object tiersObj) throws IOException {
+    private static List<AdaptiveAiDensityTier> parseAdaptiveAiDensityTiers(
+            Object tiersObj, AdaptiveAiDensityBandMode mode) throws IOException {
         if (!(tiersObj instanceof List<?> list) || list.isEmpty()) {
-            return AdaptiveAiDensityTier.defaultTiers();
+            return AdaptiveAiDensityTier.defaultTiersForMode(mode);
         }
         List<AdaptiveAiDensityTier> out = new ArrayList<>();
         int idx = 0;
         for (Object row : list) {
             idx++;
             if (!(row instanceof Map)) {
-                throw new IOException("adaptive_ai_density.tiers[" + idx + "] must be a map (min_percent, max_percent, density)");
+                throw new IOException("adaptive_ai_density.tiers[" + idx + "] must be a map with density and "
+                        + (mode == AdaptiveAiDensityBandMode.AMOUNT ? "min_players, max_players" : "min_percent, max_percent"));
             }
             Map<String, Object> map = (Map<String, Object>) row;
-            int min = (int) parseLong(map.get("min_percent"), -1L);
-            int max = (int) parseLong(map.get("max_percent"), -1L);
+            int min;
+            int max;
+            if (mode == AdaptiveAiDensityBandMode.AMOUNT) {
+                min = (int) parseLong(map.get("min_players"), -1L);
+                max = (int) parseLong(map.get("max_players"), -1L);
+            } else {
+                min = (int) parseLong(map.get("min_percent"), -1L);
+                max = (int) parseLong(map.get("max_percent"), -1L);
+            }
             double density = parseDoubleYaml(map.get("density"), Double.NaN);
-            if (min < 0 || max < 0 || min > 100 || max > 100 || min > max
-                    || Double.isNaN(density) || density < 0 || Double.isInfinite(density)) {
-                throw new IOException("adaptive_ai_density.tiers[" + idx + "] invalid (need 0<=min<=max<=100, density>=0): " + row);
+            if (mode == AdaptiveAiDensityBandMode.PERCENT) {
+                if (min < 0 || max < 0 || min > 100 || max > 100 || min > max
+                        || Double.isNaN(density) || density < 0 || Double.isInfinite(density)) {
+                    throw new IOException(
+                            "adaptive_ai_density.tiers[" + idx + "] invalid (percent mode: 0<=min<=max<=100, density>=0): " + row);
+                }
+            } else {
+                if (min < 0 || max < 0 || min > max || Double.isNaN(density) || density < 0 || Double.isInfinite(density)) {
+                    throw new IOException(
+                            "adaptive_ai_density.tiers[" + idx + "] invalid (amount mode: 0<=min_players<=max_players, density>=0): "
+                                    + row);
+                }
             }
             out.add(new AdaptiveAiDensityTier(min, max, density));
         }
@@ -711,6 +831,10 @@ public final class BotConfig {
         return dailySpinMax;
     }
 
+    public EconomyParkingSlotsConfig economyParkingSlots() {
+        return economyParkingSlots;
+    }
+
     public String ecosystemTitle() {
         return ecosystemTitle;
     }
@@ -773,12 +897,16 @@ public final class BotConfig {
         return adaptiveAiDensityIntervalMinutes;
     }
 
-    /** Server slot cap for population fill % (must be &gt; 0 when feature is enabled). */
+    /** Server slot cap for population fill % (must be &gt; 0 when feature is enabled in percent mode). */
     public int adaptiveAiDensityMaxPlayers() {
         return adaptiveAiDensityMaxPlayers;
     }
 
-    /** Sorted by {@code min_percent}. */
+    public AdaptiveAiDensityBandMode adaptiveAiDensityBandMode() {
+        return adaptiveAiDensityBandMode;
+    }
+
+    /** Sorted by tier lower bound ({@code min_percent} or {@code min_players}). */
     public List<AdaptiveAiDensityTier> adaptiveAiDensityTiers() {
         return adaptiveAiDensityTiers;
     }
@@ -893,5 +1021,29 @@ public final class BotConfig {
 
     public KillFlavorPack killFlavorPack() {
         return killFlavorPack;
+    }
+
+    /**
+     * When true, the bot scans {@code TheIsle.log} for {@code LogTheIsleKillData} and may remove the victim’s
+     * <b>session</b> parking slot (last {@code /evrima dino park} or {@code retrieve}), not every slot.
+     */
+    public boolean dinoParkPurgeOnKillLog() {
+        return dinoParkPurgeOnKillLog;
+    }
+
+    public int dinoParkPurgeOnKillDeathsPerSlot() {
+        return dinoParkPurgeOnKillDeathsPerSlot;
+    }
+
+    public int dinoParkRetrieveCooldownSeconds() {
+        return dinoParkRetrieveCooldownSeconds;
+    }
+
+    public DinoParkPlayerdataFile dinoParkPlayerdataFile() {
+        return dinoParkPlayerdataFile;
+    }
+
+    public DinoParkLogoutAutosaveConfig dinoParkLogoutAutosave() {
+        return dinoParkLogoutAutosave;
     }
 }

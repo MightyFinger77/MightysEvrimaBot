@@ -448,8 +448,28 @@ public final class ConfigMigration {
             sb.append("]");
             return sb.toString();
         }
-        if (value instanceof Map<?, ?>) {
-            return value.toString();
+        if (value instanceof Map<?, ?> m) {
+            if (m.isEmpty()) {
+                return "{}";
+            }
+            StringBuilder sb = new StringBuilder("{ ");
+            boolean first = true;
+            for (Map.Entry<?, ?> e : m.entrySet()) {
+                if (!first) {
+                    sb.append(", ");
+                }
+                first = false;
+                String k = String.valueOf(e.getKey());
+                if (k.matches("[A-Za-z0-9_-]+")) {
+                    sb.append(k);
+                } else {
+                    sb.append('"').append(escapeForYamlDoubleQuotedString(k)).append('"');
+                }
+                sb.append(": ");
+                sb.append(formatYamlValue(e.getValue()));
+            }
+            sb.append(" }");
+            return sb.toString();
         }
         return value.toString();
     }

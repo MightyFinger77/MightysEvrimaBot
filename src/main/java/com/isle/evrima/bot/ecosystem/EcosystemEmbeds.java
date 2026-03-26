@@ -24,12 +24,16 @@ public final class EcosystemEmbeds {
     /**
      * @param guild server where the embed is shown — used to resolve {@code :short_name:} in taxonomy into real emotes.
      *              May be null (e.g. DMs); short names are left as plain text.
+     * @param speciesCapControlEnabled when true and {@code speciesCaps} has a positive cap for a row, count ≥ cap adds a short *capped* note
+     * @param speciesCaps keys from {@code species_population_control.caps} (matched case-insensitively to count rows)
      */
     public static MessageEmbed build(
             String title,
             PopulationSnapshot snap,
             SpeciesTaxonomy taxonomy,
-            Guild guild) {
+            Guild guild,
+            boolean speciesCapControlEnabled,
+            Map<String, Integer> speciesCaps) {
         int total = snap.referencePlayerTotal();
 
         StringBuilder overview = new StringBuilder();
@@ -47,7 +51,7 @@ public final class EcosystemEmbeds {
                 .append("\n");
         overview.append("\n").append(balanceLine(snap));
 
-        String speciesBlock = formatSpeciesTable(snap, total, taxonomy, guild);
+        String speciesBlock = formatSpeciesTable(snap, total, taxonomy, guild, speciesCapControlEnabled, speciesCaps);
         if (speciesBlock.length() > 3500) {
             speciesBlock = speciesBlock.substring(0, 3480) + "\n…(truncated)";
         }
@@ -104,6 +108,13 @@ public final class EcosystemEmbeds {
         int c = snap.carnivores();
         int h = snap.herbivores();
         int o = snap.omnivores();
+        if (c + h + o == 0 && t > 0) {
+            if (snap.unknownSpeciesLines() > 0) {
+                return "Diet totals are **0** — **" + snap.unknownSpeciesLines()
+                        + "** player(s) not matched to taxonomy (limbo / internal species strings / add `species-taxonomy.yml` keys).";
+            }
+            return "Diet totals are **0** — no classified species in the snapshot (check RCON output and taxonomy).";
+        }
         if (h == 0 && c > 5) {
             return "Heavy carnivore skew — herbivores at **0**.";
         }
@@ -135,9 +146,24 @@ public final class EcosystemEmbeds {
     }
 
     private static String formatSpeciesTable(
-            PopulationSnapshot snap, int total, SpeciesTaxonomy taxonomy, Guild guild) {
+            PopulationSnapshot snap,
+            int total,
+            SpeciesTaxonomy taxonomy,
+            Guild guild,
+            boolean capControlOn,
+            Map<String, Integer> speciesCaps) {
         if (snap.speciesCounts().isEmpty()) {
-            return "";
+            if (snap.unknownSpeciesLines() <= 0) {
+                return "";
+            }
+            StringBuilder onlyUnknown = new StringBuilder();
+            onlyUnknown.append("❓ **Unknown / unmatched:** ").append(snap.unknownSpeciesLines());
+            if (total > 0) {
+                onlyUnknown.append(" (")
+                        .append(String.format(Locale.ROOT, "%.1f%%", 100.0 * snap.unknownSpeciesLines() / total))
+                        .append(")");
+            }
+            return onlyUnknown.toString();
         }
         List<Map.Entry<String, Integer>> sorted = new ArrayList<>(snap.speciesCounts().entrySet());
         sorted.sort(Comparator.comparingInt((Map.Entry<String, Integer> e) -> e.getValue()).reversed());
@@ -154,7 +180,11 @@ public final class EcosystemEmbeds {
                     .append(n)
                     .append(" (")
                     .append(pct)
-                    .append(")\n");
+                    .append(")");
+            if (capControlOn && speciesCaps != null && isAtSpeciesCap(e.getKey(), n, speciesCaps)) {
+                sb.append(" · *capped*");
+            }
+            sb.append("\n");
         }
         if (snap.unknownSpeciesLines() > 0) {
             sb.append("❓ **Unknown / unmatched:** ").append(snap.unknownSpeciesLines());
@@ -165,5 +195,25 @@ public final class EcosystemEmbeds {
             }
         }
         return sb.toString().strip();
+    }
+
+    /** True when {@code species_population_control} has a positive cap for this name and count is at or above it. */
+    private static boolean isAtSpeciesCap(String displayName, int count, Map<String, Integer> caps) {
+        if (displayName == null || caps.isEmpty() || count < 0) {
+            return false;
+        }
+        for (Map.Entry<String, Integer> e : caps.entrySet()) {
+            if (e.getKey() == null) {
+                continue;
+            }
+            int cap = e.getValue() == null ? 0 : e.getValue();
+            if (cap <= 0) {
+                continue;
+            }
+            if (e.getKey().equalsIgnoreCase(displayName) && count >= cap) {
+                return true;
+            }
+        }
+        return false;
     }
 }

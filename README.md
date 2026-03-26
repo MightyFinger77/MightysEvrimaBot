@@ -1,6 +1,6 @@
 # EvrimaServerBot
 
-**Version 1.0.2** — release notes: [CHANGELOG.md](CHANGELOG.md).
+**Version 1.2.0** — release notes: [CHANGELOG.md](CHANGELOG.md).
 
 Self-hosted **Discord** companion for **The Isle Evrima** dedicated servers: Steam↔Discord linking, **RCON** admin actions, basic economy, and parking-slot metadata (no proprietary game hooks).
 
@@ -10,16 +10,17 @@ Self-hosted **Discord** companion for **The Isle Evrima** dedicated servers: Ste
 
 1. [What you need](#what-you-need)
 2. [How it fits together](#how-it-fits-together)
-3. [Discord application setup](#discord-application-setup)
-4. [Evrima server (RCON)](#evrima-server-rcon)
-5. [Configuration](#configuration)
-6. [Build](#build)
-7. [Run](#run)
-8. [Slash commands reference](#slash-commands-reference)
-9. [Troubleshooting](#troubleshooting)
-10. [Security notes](#security-notes)
-11. [License / attribution](#license--attribution)
-12. [Roadmap / todo](#roadmap--todo)
+3. [The Isle game build compatibility](#the-isle-game-build-compatibility)
+4. [Discord application setup](#discord-application-setup)
+5. [Evrima server (RCON)](#evrima-server-rcon)
+6. [Configuration](#configuration)
+7. [Build](#build)
+8. [Run](#run)
+9. [Slash commands reference](#slash-commands-reference)
+10. [Troubleshooting](#troubleshooting)
+11. [Security notes](#security-notes)
+12. [License / attribution](#license--attribution)
+13. [Roadmap / todo](#roadmap--todo)
 
 ---
 
@@ -44,6 +45,19 @@ Self-hosted **Discord** companion for **The Isle Evrima** dedicated servers: Ste
 - **Discord** delivers slash commands and DMs. (DMs currently don't work, this is an Isle issue not an EvrimaBot issue)
 - **RCON** sends text commands the game server understands (`announce`, `kick`, etc.).
 - **SQLite** stores links, points, audit rows, and optional “parking” metadata you define later.
+
+---
+
+## The Isle game build compatibility
+
+This bot targets **The Isle: Evrima** dedicated servers, but **game patches change RCON and logs**. Features are **version-specific**: what works on one Evrima build may **break or need config changes** on another.
+
+- **RCON** verbs, arguments, and response text can differ between releases. If a command stops working after a game update, compare what the server expects with what the bot sends (see `BotListener` and related code).
+- **`TheIsle.log`** mirrors (chat, kills, deaths) depend on **stable log tags and line shapes**. Defaults in `config.yml` (for example `ingame_chat_log.line_contains`) match a recent tested build; grep your live log and adjust substrings if lines no longer match.
+- **Dino parking** options such as **`dino_park.logout_autosave`** match disconnect lines that **vary by game version**. If autosave stops firing, update `soft_logout_line_contains`, `hard_disconnect_line_contains`, and `hard_disconnect_delay_seconds` to match your server’s log lines (hard disconnect needs SteamID64 on the same line).
+- **`playerlist` / `getplayerdata`** formatting affects ecosystem counts, `whois`, and parking metadata.
+
+After **any** Evrima dedicated-server upgrade, **re-check** log-based features and RCON-heavy commands before relying on them in production.
 
 ---
 
@@ -101,7 +115,7 @@ roles:
 
 Enable RCON in your dedicated server config (hosting docs usually mention `Game.ini`: `bRconEnabled=true`, password, port). The bot’s `rcon` section must match **host**, **port**, and **password**.
 
-**Exact RCON command syntax** can vary slightly by game build. If something fails, compare the strings the bot sends (see `BotListener`) with your host’s RCON reference and adjust.
+**Exact RCON command syntax** can vary by game build; see [The Isle game build compatibility](#the-isle-game-build-compatibility). If something fails, compare the strings the bot sends (see `BotListener`) with your host’s RCON reference and adjust.
 
 ---
 
@@ -126,7 +140,7 @@ Paths like `database.path` are relative to the **process working directory** (th
 
 **Scheduled corpse wipes:** configure `scheduled_wipecorpses.enabled` + `interval_minutes` to run RCON `wipecorpses` automatically (same action as `/evrima-admin wipecorpses`). `enabled` supports `true`, `false`, and `dynamic`. In `dynamic`, wipes target ON when online percent is at least `dynamic_enable_percent` of `dynamic_max_players`, and OFF when below it; transitions are debounced by `dynamic_disable_grace_seconds` in both directions (anti-flap). After a **pre-wipe `announce`** succeeds, that wipe still runs on schedule even if population drops below threshold (players were warned). Optional `warn_before_minutes` sends an in-game `announce` first; set `0` to skip. `announce_message` customizes the warning text. `/evrima-admin corpse-wipe-control`, `corpse-wipe-set`, and `corpse-wipe-clear` **update `config.yml`**; `corpse-wipe-clear` resets fields (or the whole section) to values from the bundled default template (`config.yml` in the JAR).
 
-**In-game log → Discord (chat + kills/deaths):** Evrima RCON does **not** expose chat or kill feeds. Optional `ingame_chat_log` tails **`TheIsle.log`** and posts lines that match **any** substring in `line_contains` (YAML list or one string). Defaults include **`LogTheIsleChatData`** (chat) and **`LogTheIsleKillData`** (kills / many death messages such as PvP — same markers as [Theislemanager/Chatbot](https://github.com/Theislemanager/Chatbot)). By default **`mirror_local_chat: false`** drops **`[Spatial]`** / **`[Local]`** lines after parse so only global-style traffic is mirrored; set **`mirror_local_chat: true`** to include proximity chat. The bot **parses** known formats into short Discord lines, e.g. `[Global] **Player:** message` and factual kills like `**Player** — Species (Sex) — cause` or PvP `**Killer** (Species, Sex) → **Victim** (…)`. **Kill flavor (1.0.2+):** when **`kill_flavor_enabled`** is true, templates come from **`kill-flavor.yml`** beside `config.yml` (extracted from the JAR if missing) — per-species PvP lines, AI-kill lines, random natural-death quips, same-species lines, and generic fallbacks; set **`kill_flavor_enabled: false`** for factual lines only. Other shapes get a best-effort strip of tags/SteamIDs. Starvation / odd kills: add substrings from your log if needed. **YAML on Windows:** use forward slashes or single-quoted paths (see `ingame_chat_log` in the default `config.yml` bundled with the JAR). `channel_id: 0` disables; offset in `bot_kv`; new paths start at EOF.
+**In-game log → Discord (chat + kills/deaths):** Evrima RCON does **not** expose chat or kill feeds. Log tags and line shapes are **game-version specific**; see [The Isle game build compatibility](#the-isle-game-build-compatibility). Optional `ingame_chat_log` tails **`TheIsle.log`** and posts lines that match **any** substring in `line_contains` (YAML list or one string). Defaults include **`LogTheIsleChatData`** (chat) and **`LogTheIsleKillData`** (kills / many death messages such as PvP — same markers as [Theislemanager/Chatbot](https://github.com/Theislemanager/Chatbot)). By default **`mirror_local_chat: false`** drops **`[Spatial]`** / **`[Local]`** lines after parse so only global-style traffic is mirrored; set **`mirror_local_chat: true`** to include proximity chat. The bot **parses** known formats into short Discord lines, e.g. `[Global] **Player:** message` and factual kills like `**Player** — Species (Sex) — cause` or PvP `**Killer** (Species, Sex) → **Victim** (…)`. **Kill flavor:** when **`kill_flavor_enabled`** is true, templates come from **`kill-flavor.yml`** beside `config.yml` (extracted from the JAR if missing) — per-species PvP lines, AI-kill lines, random natural-death quips, same-species lines, and generic fallbacks; set **`kill_flavor_enabled: false`** for factual lines only. Other shapes get a best-effort strip of tags/SteamIDs. Starvation / odd kills: add substrings from your log if needed. **YAML on Windows:** use forward slashes or single-quoted paths (see `ingame_chat_log` in the default `config.yml` bundled with the JAR). `channel_id: 0` disables; offset in `bot_kv`; new paths start at EOF.
 
 ---
 
@@ -138,7 +152,7 @@ Build the bot yourself if you are not using a prebuilt release JAR. You only nee
 
 - **Java Development Kit (JDK) 17** or newer (LTS such as Temurin 17/21 is fine). The project targets **Java 17** (`release 17` in `pom.xml`).
 - **Apache Maven 3.8+** (3.9.x recommended) on your `PATH`.
-- A copy of this project’s source (git clone, zip download, etc.). Open a terminal in the **project root** — the directory that contains **`pom.xml`** (for this repo that is usually a versioned folder like `EvrimaServerBot/1.0.2`).
+- A copy of this project’s source (git clone, zip download, etc.). Open a terminal in the **project root** — the directory that contains **`pom.xml`** (for this tree: `EvrimaServerBot/1.2.0`).
 
 Check versions:
 
@@ -168,25 +182,25 @@ After a successful build:
 
 | Artifact | Location | Notes |
 |----------|----------|--------|
-| **Runnable bot JAR** | `target/evrima-server-bot-1.0.2.jar` | **Use this** with `java -jar`. Includes dependencies (tens of MB — if the file is only a few hundred KB, you did not build the shaded artifact). |
-| Original (non-shaded) | `target/original-evrima-server-bot-1.0.2.jar` | Internal; **do not** run this as the bot — it is not a fat JAR. |
+| **Runnable bot JAR** | `target/evrima-server-bot-1.2.0.jar` | **Use this** with `java -jar`. Includes dependencies (tens of MB — if the file is only a few hundred KB, you did not build the shaded artifact). |
+| Original (non-shaded) | `target/original-evrima-server-bot-1.2.0.jar` | Internal; **do not** run this as the bot — it is not a fat JAR. |
 
-Copy **`evrima-server-bot-1.0.2.jar`** (the one **without** `original-` in the name) to the folder where you run the bot. Optionally add **`start-bot.bat`** (Windows) or **`start-bot.sh`** (Linux/macOS), then follow [Run](#run).
+Copy **`evrima-server-bot-1.2.0.jar`** (the one **without** `original-` in the name) to the folder where you run the bot. Optionally add **`start-bot.bat`** (Windows) or **`start-bot.sh`** (Linux/macOS), then follow [Run](#run).
 
 ### Windows quick reference
 
 ```powershell
-cd C:\path\to\EvrimaServerBot\1.0.2
+cd C:\path\to\EvrimaServerBot\1.2.0
 mvn clean package
-dir target\evrima-server-bot-1.0.2.jar
+dir target\evrima-server-bot-1.2.0.jar
 ```
 
 ### Linux / macOS quick reference
 
 ```bash
-cd /path/to/EvrimaServerBot/1.0.2
+cd /path/to/EvrimaServerBot/1.2.0
 mvn clean package
-ls -lh target/evrima-server-bot-1.0.2.jar
+ls -lh target/evrima-server-bot-1.2.0.jar
 ```
 
 ### IDE (IntelliJ, VS Code, Eclipse)
@@ -198,7 +212,7 @@ Import the folder as a **Maven** project (open `pom.xml` or the root directory).
 - **`mvn` not found** — Install Maven and add it to `PATH`, or use a full path to `mvn`.
 - **Wrong Java** — If Maven uses Java 8/11, set **`JAVA_HOME`** to a JDK 17+ install and restart the terminal.
 - **`BUILD FAILURE` / compiler errors** — Ensure you are on the intended **branch or version folder** and JDK **17+**.
-- **JAR runs but classes are missing** — You started **`original-*.jar`** or a non-shaded artifact; run **`target/evrima-server-bot-1.0.2.jar`** from a **`package`** build that completed **`shade`**.
+- **JAR runs but classes are missing** — You started **`original-*.jar`** or a non-shaded artifact; run **`target/evrima-server-bot-1.2.0.jar`** from a **`package`** build that completed **`shade`**.
 
 ---
 
@@ -210,24 +224,24 @@ Import the folder as a **Maven** project (open `pom.xml` or the root directory).
 
 ```bash
 cd /path/to/bot-folder
-java -jar evrima-server-bot-1.0.2.jar
+java -jar evrima-server-bot-1.2.0.jar
 ```
 
 ```powershell
 cd C:\path\to\bot-folder
-java -jar evrima-server-bot-1.0.2.jar
+java -jar evrima-server-bot-1.2.0.jar
 ```
 
 **JDK 24+:** If you see warnings about `java.lang.System::load` / SQLite, either use **`start-bot.bat`** / **`start-bot.sh`** (they add `--enable-native-access=ALL-UNNAMED` when supported) or run:
 
 ```bash
-java --enable-native-access=ALL-UNNAMED -jar evrima-server-bot-1.0.2.jar
+java --enable-native-access=ALL-UNNAMED -jar evrima-server-bot-1.2.0.jar
 ```
 
 With an explicit **`config.yml`** path (taxonomy file is expected **in the same folder**; missing **`species-taxonomy.yml`** is created from the JAR if absent):
 
 ```bash
-java -jar evrima-server-bot-1.0.2.jar /opt/evrima-bot/configs/config.yml
+java -jar evrima-server-bot-1.2.0.jar /opt/evrima-bot/configs/config.yml
 ```
 
 ### On first start (and every start)

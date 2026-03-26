@@ -1,8 +1,9 @@
-# Kill / death lines for Discord log mirror (EvrimaServerBot 1.0.2+).
+# Kill / death / join / leave lines for Discord log mirror (EvrimaServerBot 1.0.2+).
 # Placeholders (Discord markdown-safe, already escaped by the bot):
 #   PvP: {killer} {victim} {killerSpecies} {killerSex} {victimSpecies} {victimGender}
 #   AI kill flavor lines omit sex/gender for wildlife (bundled quips use species only).
 #   Natural: {victim} {species} {cause} — optional {sex} if you add custom lines (bundled quips omit sex).
+#   Join / leave (LogTheIsleJoinData / LogTheIsleLeaveData): {player} {steam} — {steam} is wrapped in backticks.
 # Add species keys in lowercase or any case — they are matched case-insensitively.
 
 natural_quips:
@@ -129,3 +130,19 @@ pvp_quips:
     - "**{victim}** ({victimSpecies}) got feathered by **{killer}**'s Beipiaosaurus."
   pteranodon:
     - "**{killer}**'s Pteranodon dive-bombed **{victim}** ({victimSpecies})'s plans."
+
+# Player connect — add LogTheIsleJoinData to ingame_chat_log.line_contains. Uses same kill_flavor_enabled toggle.
+join_quips:
+  - "**{player}** has washed ashore"
+  - "The island gains another resident: **{player}**"
+  - "**{player}** just spawned in — hope they read the patch notes"
+  - "Footprints in the sand: **{player}** is online"
+  - "Survival mode engaged for **{player}**"
+
+# Player disconnect (JoinData lines with “Left the Server…”, or LogTheIsleLeaveData if your build uses it).
+leave_quips:
+  - "**{player}** has left the island"
+  - "**{player}** logged off — the jungle feels quieter"
+  - "See you in the fossil record, **{player}**"
+  - "**{player}** disconnected — stay hungry out there"
+  - "The shores are still; **{player}** is gone"

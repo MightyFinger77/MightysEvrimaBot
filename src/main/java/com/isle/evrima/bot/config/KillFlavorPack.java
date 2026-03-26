@@ -17,8 +17,9 @@ import java.util.Optional;
 import java.util.concurrent.ThreadLocalRandom;
 
 /**
- * Optional funny / flavor lines for in-game kill mirrors. Loaded from {@code kill-flavor.yml} beside
- * {@code config.yml}. If disabled in config, missing file, or no matching quips, callers keep factual formatting.
+ * Optional funny / flavor lines for in-game kill mirrors and join/leave log lines. Loaded from
+ * {@code kill-flavor.yml} beside {@code config.yml}. If disabled in config, missing file, or no matching quips,
+ * callers keep factual formatting.
  */
 public final class KillFlavorPack {
 
@@ -34,6 +35,8 @@ public final class KillFlavorPack {
             Map.of(),
             List.of(),
             List.of(),
+            List.of(),
+            List.of(),
             List.of()
     );
 
@@ -45,6 +48,10 @@ public final class KillFlavorPack {
     private final List<String> sameSpeciesQuips;
     private final List<String> genericPvpQuips;
     private final List<String> genericAiPvpQuips;
+    /** Player join / connection (TheIsle.log join lines). Placeholders: {@code {player}} {@code {steam}} */
+    private final List<String> joinQuips;
+    /** Player leave / disconnect lines. Placeholders: {@code {player}} {@code {steam}} */
+    private final List<String> leaveQuips;
 
     private KillFlavorPack(
             List<String> naturalQuips,
@@ -52,7 +59,9 @@ public final class KillFlavorPack {
             Map<String, List<String>> aiPvpQuips,
             List<String> sameSpeciesQuips,
             List<String> genericPvpQuips,
-            List<String> genericAiPvpQuips
+            List<String> genericAiPvpQuips,
+            List<String> joinQuips,
+            List<String> leaveQuips
     ) {
         this.naturalQuips = List.copyOf(naturalQuips);
         this.pvpQuips = Map.copyOf(pvpQuips);
@@ -60,6 +69,8 @@ public final class KillFlavorPack {
         this.sameSpeciesQuips = List.copyOf(sameSpeciesQuips);
         this.genericPvpQuips = List.copyOf(genericPvpQuips);
         this.genericAiPvpQuips = List.copyOf(genericAiPvpQuips);
+        this.joinQuips = List.copyOf(joinQuips);
+        this.leaveQuips = List.copyOf(leaveQuips);
     }
 
     public boolean hasAny() {
@@ -68,7 +79,9 @@ public final class KillFlavorPack {
                 || !aiPvpQuips.isEmpty()
                 || !sameSpeciesQuips.isEmpty()
                 || !genericPvpQuips.isEmpty()
-                || !genericAiPvpQuips.isEmpty();
+                || !genericAiPvpQuips.isEmpty()
+                || !joinQuips.isEmpty()
+                || !leaveQuips.isEmpty();
     }
 
     /**
@@ -126,6 +139,22 @@ public final class KillFlavorPack {
         return Optional.of(applyPlaceholders(template, escapedPlaceholders));
     }
 
+    public Optional<String> rollJoinLine(Map<String, String> escapedPlaceholders) {
+        if (joinQuips.isEmpty()) {
+            return Optional.empty();
+        }
+        String template = joinQuips.get(ThreadLocalRandom.current().nextInt(joinQuips.size()));
+        return Optional.of(applyPlaceholders(template, escapedPlaceholders));
+    }
+
+    public Optional<String> rollLeaveLine(Map<String, String> escapedPlaceholders) {
+        if (leaveQuips.isEmpty()) {
+            return Optional.empty();
+        }
+        String template = leaveQuips.get(ThreadLocalRandom.current().nextInt(leaveQuips.size()));
+        return Optional.of(applyPlaceholders(template, escapedPlaceholders));
+    }
+
     private static List<String> pickList(Map<String, List<String>> map, String lowerKey) {
         if (map == null || lowerKey == null) {
             return null;
@@ -162,7 +191,9 @@ public final class KillFlavorPack {
             List<String> same = stringList(map.get("same_species_quips"));
             List<String> gen = stringList(map.get("generic_pvp_quips"));
             List<String> genAi = stringList(map.get("generic_ai_pvp_quips"));
-            return new KillFlavorPack(natural, pvp, ai, same, gen, genAi);
+            List<String> join = stringList(map.get("join_quips"));
+            List<String> leave = stringList(map.get("leave_quips"));
+            return new KillFlavorPack(natural, pvp, ai, same, gen, genAi, join, leave);
         }
     }
 

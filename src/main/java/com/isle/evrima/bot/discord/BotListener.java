@@ -1,10 +1,13 @@
 package com.isle.evrima.bot.discord;
 
 import com.isle.evrima.bot.config.BotConfig;
+import com.isle.evrima.bot.config.EconomyParkingSlotsConfig;
 import com.isle.evrima.bot.config.ConfigYamlUpdater;
 import com.isle.evrima.bot.config.ConfigYamlUpdater.ScheduledWipeResetKey;
 import com.isle.evrima.bot.config.LiveBotConfig;
 import com.isle.evrima.bot.db.Database;
+import com.isle.evrima.bot.dino.ParkedDinoPayload;
+import com.isle.evrima.bot.dino.PlayerdataFileRestore;
 import com.isle.evrima.bot.ecosystem.EcosystemEmbeds;
 import com.isle.evrima.bot.ecosystem.PlayerlistPopulationParser;
 import com.isle.evrima.bot.ecosystem.PlayerTargetResolver;
@@ -33,6 +36,7 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.security.SecureRandom;
 import java.sql.SQLException;
+import java.time.Instant;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
@@ -99,11 +103,42 @@ public final class BotListener extends ListenerAdapter {
         }
     }
 
+    private static final String EVRIMA_PUBLIC_HELP = """
+            **Public commands** (`/evrima`)
+            
+            **`/evrima help`** — this list
+            
+            **Link:** `link start` (DM code) → `link complete` with code + your **SteamID64**
+            **Account:** `account show` · `account debug` (roles / troubleshooting)
+            **Economy:** `eco balance` · `eco spin` (once per UTC day) · `eco parking` · `eco parking-buy` (when enabled in config)
+            **Dino parking:** `dino park` (save current character) · `dino list` · `dino delete` · `dino retrieve`
+            **Ecosystem:** `ecosystem dashboard` (population snapshot)
+            
+            **Retrieve & logging in:** If your host enabled **on-disk restore** (`dino_park.playerdata_file` in the bot’s config), **`/evrima dino retrieve`** can rewrite your server save file. **Stop the dedicated server first** (or the game may overwrite the file), run retrieve, then start the server and join. Your character is whatever that save contained: **species, growth, and world position** match the snapshot captured at **park** time (plus any **logout autosave** updates if configured).
+            
+            Staff commands: `/evrima-mod adminhelp` (moderator) · `/evrima-admin …` (admin)
+            """;
+
+    private static final String EVRIMA_MOD_ADMIN_HELP = """
+            **Moderator** (`/evrima-mod`)
+            `adminhelp` — this list
+            `whois` — Discord user or `player` (SteamID64 / in-game name) + linked Steam + getplayerdata
+            `timeout` — Discord timeout (not in-game)
+            
+            **Admin** (`/evrima-admin`) — RCON + config writes (see Integrations → permissions): announce, playerlist, kick, ban, dm, getplayer, wipecorpses, reload, save, unlink, give, AI / species / corpse-wipe controls, …
+            
+            **Head admin** (`/evrima-head check`)
+            """;
+
     private void dispatchEvrima(SlashCommandInteractionEvent event) throws SQLException {
         String group = event.getSubcommandGroup();
         String sub = event.getSubcommandName();
+        if ("help".equals(sub)) {
+            event.reply(truncate(EVRIMA_PUBLIC_HELP.strip(), 2000)).setEphemeral(true).queue();
+            return;
+        }
         if (group == null || sub == null) {
-            event.reply("Unknown command shape.").setEphemeral(true).queue();
+            event.reply("Use **`/evrima help`** for public commands.").setEphemeral(true).queue();
             return;
         }
         switch (group) {
@@ -617,6 +652,10 @@ public final class BotListener extends ListenerAdapter {
             event.reply(truncate(permissions.denyModeratorMessage(actor), 2000)).setEphemeral(true).queue();
             return;
         }
+        if ("adminhelp".equals(sub)) {
+            event.reply(truncate(EVRIMA_MOD_ADMIN_HELP.strip(), 2000)).setEphemeral(true).queue();
+            return;
+        }
         if ("whois".equals(sub)) {
             OptionMapping userOpt = event.getOption("user");
             OptionMapping playerOpt = event.getOption("player");
@@ -720,11 +759,14 @@ public final class BotListener extends ListenerAdapter {
             try {
                 PopulationDashboardService.SnapshotResult res = population.snapshot(fresh);
                 SpeciesTaxonomy tax = population.taxonomy();
+                BotConfig ecoCfg = live.get();
                 MessageEmbed embed = EcosystemEmbeds.build(
-                        live.get().ecosystemTitle(),
+                        ecoCfg.ecosystemTitle(),
                         res.data(),
                         tax,
-                        event.getGuild());
+                        event.getGuild(),
+                        ecoCfg.speciesPopulationControlEnabled(),
+                        ecoCfg.speciesPopulationCaps());
                 hook.editOriginalEmbeds(embed).queue(
                         null,
                         err -> LOG.warn("ecosystem dashboard editOriginalEmbeds: {}", err.toString()));
@@ -756,7 +798,57 @@ public final class BotListener extends ListenerAdapter {
             database.addBalance(uid, roll);
             database.appendAudit(uid, "eco_spin", String.valueOf(roll));
             event.reply("Daily spin: **+" + roll + "** points. New balance: **" + database.getBalance(uid) + "**.")
+                    .setEphemeral(false)
+                    .queue();
+            return;
+        }
+        if ("parking".equals(sub)) {
+            EconomyParkingSlotsConfig ps = live.get().economyParkingSlots();
+            if (!ps.enabled()) {
+                event.reply("Parking slot limits are **off** in config — you have **unlimited** dino parking slots.")
+                        .setEphemeral(true).queue();
+                return;
+            }
+            int extra = database.getExtraParkingSlots(uid);
+            int used = database.countParkedSlots(uid);
+            int cap = ps.capacityForPurchasedExtras(extra);
+            int bal = database.getBalance(uid);
+            boolean atPurchaseCap = ps.defaultSlots() + extra >= ps.maxSlots();
+            int nextPrice = atPurchaseCap ? -1 : ps.priceForNextExtraSlot(extra);
+            StringBuilder sb = new StringBuilder();
+            sb.append("**Parking slots**\n")
+                    .append("Using: **").append(used).append(" / ").append(cap).append("**\n")
+                    .append("Free (default): **").append(ps.defaultSlots()).append("**\n")
+                    .append("Purchased extras: **").append(extra).append("**\n")
+                    .append("Server cap: **").append(ps.maxSlots()).append("**\n")
+                    .append("Balance: **").append(bal).append("** points\n");
+            if (atPurchaseCap) {
+                sb.append("\nYou **cannot** buy more slots (at **max_slots**).");
+            } else {
+                sb.append("\nNext extra slot costs: **").append(nextPrice).append("** points — `/evrima eco parking-buy`.\n")
+                        .append("Formula: `base_price_per_slot × price_multiplier^purchased_extras` (see `economy.parking_slots`).");
+            }
+            event.reply(truncate(sb.toString(), 2000)).setEphemeral(true).queue();
+            LOG.info("eco parking: discordUserId={} used={} cap={} extra={} balance={}", uid, used, cap, extra, bal);
+            return;
+        }
+        if ("parking-buy".equals(sub)) {
+            EconomyParkingSlotsConfig ps = live.get().economyParkingSlots();
+            Database.ParkingSlotPurchaseResult buy = database.purchaseParkingExtraSlot(uid, ps);
+            if (!buy.ok()) {
+                event.reply(buy.errorMessage()).setEphemeral(true).queue();
+                LOG.info("eco parking-buy denied: discordUserId={} detail={}", uid, buy.errorMessage());
+                return;
+            }
+            int bal = database.getBalance(uid);
+            int cap = ps.capacityForPurchasedExtras(buy.extraSlotsNow());
+            database.appendAudit(uid, "eco_parking_buy", "spent=" + buy.pointsSpent() + "|extra=" + buy.extraSlotsNow());
+            event.reply("Purchased **+1** parking slot for **" + buy.pointsSpent() + "** points.\n"
+                            + "Total capacity: **" + cap + "** slots (purchased extras: **" + buy.extraSlotsNow() + "**).\n"
+                            + "Balance: **" + bal + "**.")
                     .setEphemeral(true).queue();
+            LOG.info("eco parking-buy: discordUserId={} spent={} extraNow={} cap={} balance={}",
+                    uid, buy.pointsSpent(), buy.extraSlotsNow(), cap, bal);
             return;
         }
         event.reply("Unknown eco subcommand.").setEphemeral(true).queue();
@@ -907,17 +999,86 @@ public final class BotListener extends ListenerAdapter {
         }
         if ("park".equals(sub)) {
             String label = optionalString(event, "label", "Slot");
-            String json = "{\"v\":1,\"label\":" + jsonString(label)
-                    + ",\"steam\":" + jsonString(steam.get())
-                    + ",\"note\":\"Metadata-only until you wire real dino state from logs/API.\"}";
-            long id = database.insertParkedDino(uid, steam.get(), label, json);
-            database.appendAudit(uid, "dino_park", String.valueOf(id));
-            event.reply("Saved parking slot **#" + id + "** (`" + truncate(label, 80) + "`). "
-                    + "Restore is not automated yet — this row is for your own workflows.").setEphemeral(true).queue();
+            String steamId = steam.get();
+            event.deferReply(true).queue(hook -> {
+                try {
+                    BotConfig cfg = live.get();
+                    EconomyParkingSlotsConfig ps = cfg.economyParkingSlots();
+                    int used = database.countParkedSlots(uid);
+                    int extraOwned = database.getExtraParkingSlots(uid);
+                    int cap = ps.capacityForPurchasedExtras(extraOwned);
+                    if (ps.enabled() && used >= cap) {
+                        hook.editOriginal("Parking is full (**" + used + " / " + cap + "** slots). "
+                                        + "Use `/evrima eco parking` for details, or `/evrima eco parking-buy` to spend points for more.")
+                                .queue();
+                        LOG.info("dino park rejected (full): discordUserId={} steamId64={} used={} cap={}", uid, steamId, used, cap);
+                        return;
+                    }
+
+                    String raw = rcon.run("getplayerdata " + steamId);
+                    String filtered = EvrimaRcon.filterGetplayerdataResponseForSteamId(raw, steamId);
+                    Optional<byte[]> diskCap = PlayerdataFileRestore.captureIfPresent(
+                            cfg.dinoParkPlayerdataFile(), cfg.configYamlPath(), steamId);
+
+                    ParkedDinoPayload.Summary sum;
+                    String json;
+                    boolean diskOnly = false;
+                    long now = Instant.now().getEpochSecond();
+                    if (filtered.isBlank()) {
+                        byte[] diskBytes = diskCap.orElse(null);
+                        if (diskBytes == null || diskBytes.length == 0) {
+                            hook.editOriginal("Could not read **your** `getplayerdata` row (you may be **offline** or not spawned).\n\n"
+                                            + "**Options:** join **in-game** on this character and try again, **or** ask your host to enable "
+                                            + "`dino_park.playerdata_file` with a correct `path_template` so the bot can capture your save "
+                                            + "from disk when RCON has no row.")
+                                    .queue();
+                            LOG.warn("dino park fail (no RCON row, no disk capture): discordUserId={} steamId64={}", uid, steamId);
+                            return;
+                        }
+                        diskOnly = true;
+                        sum = new ParkedDinoPayload.Summary(null, null, null);
+                        String placeholderRaw = "(offline / no RCON getplayerdata row at park time — on-disk player file snapshot only)\n"
+                                + "SteamID64: " + steamId;
+                        json = ParkedDinoPayload.buildJson(now, placeholderRaw, sum, diskCap);
+                        LOG.info("dino park using disk-only snapshot: discordUserId={} steamId64={} bytes={}",
+                                uid, steamId, diskBytes.length);
+                    } else {
+                        sum = ParkedDinoPayload.parseSummaryFromGetplayerdata(filtered);
+                        json = ParkedDinoPayload.buildJson(now, filtered, sum, diskCap);
+                    }
+
+                    long id = database.insertParkedDino(uid, steamId, label, json);
+                    database.setParkSessionSlot(uid, id);
+                    database.appendAudit(uid, "dino_park", String.valueOf(id));
+                    String diskNote = diskCap.isPresent()
+                            ? "\n\n_On-disk player file **captured** for lossless retrieve (see `dino_park.playerdata_file`)._"
+                            : (cfg.dinoParkPlayerdataFile().enabled() && cfg.dinoParkPlayerdataFile().captureFileOnPark()
+                            ? "\n\n_No playerdata file found at `path_template` — retrieve will not be able to restore bytes until you park again with the file present._"
+                            : "");
+                    if (diskOnly) {
+                        diskNote = "\n\n_Parked from **server save file** only (no live `getplayerdata` text). Species line in lists may show “—” until you park in-game once._"
+                                + diskNote;
+                    }
+                    hook.editOriginal("Parked **#" + id + "** — `" + truncate(label, 80) + "`\n**Snapshot:** "
+                                    + sum.oneLine()
+                                    + diskNote
+                                    + "\n\n_Use `/evrima dino retrieve` to show the snapshot and optionally write the server file (see config)._")
+                            .queue();
+                    LOG.info("dino park: discordUserId={} steamId64={} slotId={} label=\"{}\" mode={} summary=\"{}\"",
+                            uid, steamId, id, label, diskOnly ? "disk_only" : "rcon", dinoSummaryForLog(sum.oneLine()));
+                } catch (SQLException e) {
+                    LOG.warn("dino park db: {}", e.toString());
+                    hook.editOriginal("Database error while saving slot.").queue();
+                } catch (IOException e) {
+                    LOG.warn("dino park rcon: {}", e.toString());
+                    hook.editOriginal("RCON failed: " + truncate(e.getMessage(), 1800)).queue();
+                }
+            }, f -> LOG.error("deferReply (dino park) failed", f));
             return;
         }
         if ("list".equals(sub)) {
             var rows = database.listParked(uid);
+            LOG.info("dino list: discordUserId={} steamId64={} count={}", uid, steam.get(), rows.size());
             if (rows.isEmpty()) {
                 event.reply("No parking slots saved.").setEphemeral(true).queue();
                 return;
@@ -925,7 +1086,8 @@ public final class BotListener extends ListenerAdapter {
             StringBuilder sb = new StringBuilder();
             for (Database.ParkedRow r : rows) {
                 sb.append("#").append(r.id()).append(" — ").append(r.label() == null ? "(no label)" : r.label())
-                        .append(" — parked ").append(r.parkedAtEpochSec()).append("\n");
+                        .append(" — ").append(r.snapshotSummary())
+                        .append(" — t=").append(r.parkedAtEpochSec()).append("\n");
             }
             event.reply(truncate(sb.toString(), 2000)).setEphemeral(true).queue();
             return;
@@ -933,19 +1095,74 @@ public final class BotListener extends ListenerAdapter {
         if ("delete".equals(sub)) {
             long id = requiredLong(event, "id");
             if (database.deleteParked(id, uid)) {
+                database.reconcileParkSessionAfterDelete(uid, id);
                 database.appendAudit(uid, "dino_delete", String.valueOf(id));
                 event.reply("Deleted slot **#" + id + "**.").setEphemeral(true).queue();
+                LOG.info("dino delete: discordUserId={} steamId64={} slotId={}", uid, steam.get(), id);
             } else {
                 event.reply("No slot **#" + id + "** for your account.").setEphemeral(true).queue();
+                LOG.info("dino delete miss: discordUserId={} steamId64={} slotId={}", uid, steam.get(), id);
             }
             return;
         }
         if ("retrieve".equals(sub)) {
             long id = requiredLong(event, "id");
-            event.reply("Slot **#" + id + "**: in-game restore is **not implemented** in this bot yet "
-                    + "(needs supported server API or your own capture pipeline). "
-                    + "Use stored metadata from your DB export or extend `parked_dinos.payload_json`.")
-                    .setEphemeral(true).queue();
+            event.deferReply(true).queue(hook -> {
+                try {
+                    Optional<Database.ParkedFullRow> row = database.findParked(id, uid);
+                    if (row.isEmpty()) {
+                        hook.editOriginal("No slot **#" + id + "** for your account.").queue();
+                        LOG.info("dino retrieve miss: discordUserId={} steamId64={} slotId={}", uid, steam.get(), id);
+                        return;
+                    }
+                    Database.ParkedFullRow r = row.get();
+                    BotConfig cfg0 = live.get();
+                    int cdSec = cfg0.dinoParkRetrieveCooldownSeconds();
+                    if (cdSec > 0) {
+                        long last = database.getParkRetrieveLastEpochSec(uid, id);
+                        long nowSec = Instant.now().getEpochSecond();
+                        if (last > 0 && nowSec - last < cdSec) {
+                            long remain = cdSec - (nowSec - last);
+                            hook.editOriginal("Retrieve cooldown: wait **" + remain + "** s before slot **#" + id
+                                            + "** again (see `dino_park.retrieve_cooldown_seconds` in config).").queue();
+                            return;
+                        }
+                    }
+                    database.clearParkKillDeathCount(uid, id);
+                    database.setParkSessionSlot(uid, id);
+                    ParkedDinoPayload.Summary sum = ParkedDinoPayload.readSummaryFromStoredJson(r.payloadJson());
+                    String raw = ParkedDinoPayload.readRawFromStoredJson(r.payloadJson()).orElse("(raw snapshot missing)");
+                    BotConfig cfg = live.get();
+                    PlayerdataFileRestore.Result fileRes = PlayerdataFileRestore.restore(
+                            cfg.dinoParkPlayerdataFile(), cfg.configYamlPath(), r.steamId64(), r.payloadJson());
+                    String head = "**Slot #" + id + "** (`" + truncate(r.label() == null ? "" : r.label(), 80) + "`)\n"
+                            + "**SteamID64:** `" + r.steamId64() + "`\n"
+                            + "**Saved (epoch sec):** " + r.parkedAtEpochSec() + "\n"
+                            + "**Summary:** " + sum.oneLine() + "\n\n"
+                            + "On-disk restore is controlled by **`dino_park.playerdata_file`** in `config.yml` "
+                            + "(lossless capture + atomic write + `.bak`).\n\n"
+                            + "**Stored `getplayerdata` text:**\n```\n";
+                    String tail = "\n```" + (fileRes.discordLine().isEmpty() ? "" : fileRes.discordLine());
+                    String full = head + truncate(raw, 1200) + tail;
+                    hook.editOriginal(truncate(full, 2000)).queue(
+                            ok -> {
+                                if (cdSec <= 0) {
+                                    return;
+                                }
+                                try {
+                                    database.setParkRetrieveLastEpochSec(uid, id, Instant.now().getEpochSecond());
+                                } catch (SQLException ex) {
+                                    LOG.warn("dino retrieve cooldown stamp: {}", ex.toString());
+                                }
+                            },
+                            err -> LOG.warn("hook.editOriginal (dino retrieve): {}", err.toString()));
+                    LOG.info("dino retrieve: discordUserId={} steamId64={} slotId={} summary=\"{}\"",
+                            uid, r.steamId64(), id, dinoSummaryForLog(sum.oneLine()));
+                } catch (SQLException e) {
+                    LOG.warn("dino retrieve: {}", e.toString());
+                    hook.editOriginal("Database error.").queue();
+                }
+            }, f -> LOG.error("deferReply (dino retrieve) failed", f));
             return;
         }
         event.reply("Unknown dino subcommand.").setEphemeral(true).queue();
@@ -1108,6 +1325,19 @@ public final class BotListener extends ListenerAdapter {
             throw new IllegalStateException("Member not resolved — use this command inside the guild.");
         }
         return mem;
+    }
+
+    /**
+     * {@link ParkedDinoPayload.Summary#oneLine()} uses a Unicode em dash when the RCON summary is empty; some Windows consoles misdecode it in log output.
+     */
+    private static String dinoSummaryForLog(String oneLine) {
+        if (oneLine == null || oneLine.isBlank()) {
+            return "(no rcon summary)";
+        }
+        if ("\u2014".equals(oneLine)) {
+            return "(no rcon summary)";
+        }
+        return oneLine;
     }
 
     private static String truncate(String s, int max) {

@@ -1,6 +1,7 @@
 package com.isle.evrima.bot;
 
 import com.isle.evrima.bot.config.BotConfig;
+import com.isle.evrima.bot.config.EconomyParkingSlotsConfig;
 import com.isle.evrima.bot.config.LiveBotConfig;
 import com.isle.evrima.bot.db.Database;
 import com.isle.evrima.bot.discord.BotListener;
@@ -68,11 +69,39 @@ public final class EvrimaServerBotApp {
         registerSlashCommands(jda, live.get());
         new PopulationDashboardScheduler(live, database, population).start(jda);
         new ServerStatusTopicScheduler(live, database, population).start(jda);
-        new IngameChatLogScheduler(live, database).start(jda);
+        new IngameChatLogScheduler(live, database, rcon).start(jda);
         new AdaptiveAiDensityScheduler(live, rcon, population, database, rconGuard).start();
         speciesControl.start();
         corpseWipe.start();
+        logEconomyAndDinoParking(live.get());
         LOG.info("EvrimaServerBot logged in as {}", jda.getSelfUser().getName());
+    }
+
+    private static void logEconomyAndDinoParking(BotConfig cfg) {
+        EconomyParkingSlotsConfig ps = cfg.economyParkingSlots();
+        if (ps.enabled()) {
+            LOG.info("Economy: daily spin {}-{} pts (UTC day); parking_slots enabled (default={}, max={}, base_price={}, multiplier={})",
+                    cfg.dailySpinMin(), cfg.dailySpinMax(),
+                    ps.defaultSlots(), ps.maxSlots(), ps.basePricePerSlot(), ps.priceMultiplier());
+        } else {
+            LOG.info("Economy: daily spin {}-{} pts (UTC day); parking_slots disabled (unlimited /evrima dino park slots)",
+                    cfg.dailySpinMin(), cfg.dailySpinMax());
+        }
+        var pdf = cfg.dinoParkPlayerdataFile();
+        var lo = cfg.dinoParkLogoutAutosave();
+        String tmpl = pdf.pathTemplateRaw();
+        if (tmpl.length() > 120) {
+            tmpl = tmpl.substring(0, 117) + "...";
+        }
+        LOG.info("Dino park: purge_on_kill_log={} (session slot only) deaths_per_slot={}; retrieve_cooldown_seconds={}; playerdata_file enabled={} capture_on_park={} restore_on_retrieve={}; logout_autosave={}; path_template={}",
+                cfg.dinoParkPurgeOnKillLog(),
+                cfg.dinoParkPurgeOnKillDeathsPerSlot(),
+                cfg.dinoParkRetrieveCooldownSeconds(),
+                pdf.enabled(),
+                pdf.captureFileOnPark(),
+                pdf.restoreFromCaptureOnRetrieve(),
+                lo.enabled(),
+                pdf.enabled() && !tmpl.isBlank() ? tmpl : "(n/a or blank)");
     }
 
     private static void registerSlashCommands(JDA jda, BotConfig config) {

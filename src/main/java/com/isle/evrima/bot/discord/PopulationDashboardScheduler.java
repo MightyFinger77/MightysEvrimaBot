@@ -1,5 +1,6 @@
 package com.isle.evrima.bot.discord;
 
+import com.isle.evrima.bot.config.BotConfig;
 import com.isle.evrima.bot.config.LiveBotConfig;
 import com.isle.evrima.bot.db.Database;
 import com.isle.evrima.bot.ecosystem.EcosystemEmbeds;
@@ -77,11 +78,14 @@ public final class PopulationDashboardScheduler {
         PopulationDashboardService.SnapshotResult res = population.snapshot(forcePopulationRefresh);
         database.recordSteamIdsFromPlayerlistRaw(res.data().rawPlayerlist());
 
+        BotConfig dashCfg = live.get();
         var embed = EcosystemEmbeds.build(
-                live.get().ecosystemTitle(),
+                dashCfg.ecosystemTitle(),
                 res.data(),
                 population.taxonomy(),
-                ch.getGuild());
+                ch.getGuild(),
+                dashCfg.speciesPopulationControlEnabled(),
+                dashCfg.speciesPopulationCaps());
 
         String kvKey = KV_MESSAGE + "_" + channelId;
         long existingMsg = database.getBotKvLong(kvKey).orElse(0L);
