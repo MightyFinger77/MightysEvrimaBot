@@ -4,6 +4,7 @@ import com.isle.evrima.bot.config.BotConfig;
 import com.isle.evrima.bot.config.EconomyParkingSlotsConfig;
 import com.isle.evrima.bot.config.LiveBotConfig;
 import com.isle.evrima.bot.db.Database;
+import com.isle.evrima.bot.discord.AutoMessageScheduler;
 import com.isle.evrima.bot.discord.BotListener;
 import com.isle.evrima.bot.discord.CommandRegistry;
 import com.isle.evrima.bot.discord.IngameChatLogScheduler;
@@ -56,7 +57,8 @@ public final class EvrimaServerBotApp {
         PopulationDashboardService population = new PopulationDashboardService(live, rcon, taxonomy);
         ScheduledCorpseWipeScheduler corpseWipe = new ScheduledCorpseWipeScheduler(live, rcon, population, rconGuard);
         SpeciesPopulationControlScheduler speciesControl = new SpeciesPopulationControlScheduler(live, rcon, population, rconGuard);
-        BotListener listener = new BotListener(live, database, rcon, permissions, population, speciesControl, corpseWipe);
+        AutoMessageScheduler autoMessages = new AutoMessageScheduler(live, rcon);
+        BotListener listener = new BotListener(live, database, rcon, permissions, population, speciesControl, corpseWipe, autoMessages);
 
         JDA jda = JDABuilder.createDefault(live.get().discordToken())
                 .enableIntents(GatewayIntent.GUILD_MEMBERS)
@@ -67,6 +69,7 @@ public final class EvrimaServerBotApp {
 
         jda.awaitReady();
         registerSlashCommands(jda, live.get());
+        autoMessages.start();
         new PopulationDashboardScheduler(live, database, population).start(jda);
         new ServerStatusTopicScheduler(live, database, population).start(jda);
         new IngameChatLogScheduler(live, database, rcon).start(jda);

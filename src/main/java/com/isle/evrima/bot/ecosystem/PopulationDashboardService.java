@@ -16,6 +16,9 @@ import java.util.Objects;
 public final class PopulationDashboardService {
 
     private static final Logger LOG = LoggerFactory.getLogger(PopulationDashboardService.class);
+    private static final long EMPTY_STANDBY_MIN_MS = 45_000L;
+    private static final long DOWN_STANDBY_BASE_MS = 15_000L;
+    private static final long DOWN_STANDBY_MAX_MS = 300_000L;
 
     private final LiveBotConfig live;
     private final RconService rcon;
@@ -23,6 +26,9 @@ public final class PopulationDashboardService {
     private volatile SpeciesTaxonomy taxonomy;
 
     private volatile Cached cache;
+    private volatile long standbyUntilEpochMs;
+    private volatile int consecutiveEmptyPolls;
+    private volatile int consecutiveFailures;
 
     private record Cached(long fetchedAtEpochMs, PopulationSnapshot snapshot) {}
 
@@ -75,17 +81,88 @@ public final class PopulationDashboardService {
             long ageSec = Math.max(0, (now - c.fetchedAtEpochMs) / 1000);
             return new SnapshotResult(c.snapshot, true, ageSec);
         }
-        String raw = rcon.run("playerlist");
-        PopulationSnapshot snap = PlayerlistPopulationParser.parse(raw, taxonomy);
-        if (PlayerlistPopulationParser.shouldFetchBulkGetplayerdata(raw, snap)) {
-            try {
-                String bulk = rcon.run("getplayerdata");
-                snap = PlayerlistPopulationParser.parse(raw, bulk, taxonomy);
-            } catch (IOException e) {
-                LOG.warn("ecosystem: bulk getplayerdata failed: {}", e.toString());
+        if (now < standbyUntilEpochMs) {
+            if (c != null) {
+                long ageSec = Math.max(0, (now - c.fetchedAtEpochMs) / 1000);
+                return new SnapshotResult(c.snapshot, true, ageSec);
             }
+            return new SnapshotResult(standbySnapshot("Population standby: waiting before next RCON poll."), true, 0);
+        }
+
+        PopulationSnapshot snap;
+        try {
+            String raw = rcon.run("playerlist");
+            snap = PlayerlistPopulationParser.parse(raw, taxonomy);
+            if (PlayerlistPopulationParser.shouldFetchBulkGetplayerdata(raw, snap)) {
+                try {
+                    String bulk = rcon.run("getplayerdata");
+                    snap = PlayerlistPopulationParser.parse(raw, bulk, taxonomy);
+                } catch (IOException e) {
+                    LOG.warn("ecosystem: bulk getplayerdata failed: {}", e.toString());
+                }
+            }
+        } catch (IOException e) {
+            consecutiveFailures++;
+            long backoffMs = failureBackoffMs(consecutiveFailures);
+            standbyUntilEpochMs = now + backoffMs;
+            if (consecutiveFailures == 1) {
+                LOG.warn("ecosystem: playerlist unavailable; entering standby for {}s", backoffMs / 1000L);
+            } else {
+                LOG.debug("ecosystem: playerlist still unavailable; standby {}s", backoffMs / 1000L);
+            }
+            if (c != null) {
+                long ageSec = Math.max(0, (now - c.fetchedAtEpochMs) / 1000);
+                return new SnapshotResult(c.snapshot, true, ageSec);
+            }
+            return new SnapshotResult(standbySnapshot("Population standby: server unreachable."), true, 0);
+        }
+
+        consecutiveFailures = 0;
+        if (snap.referencePlayerTotal() <= 0) {
+            consecutiveEmptyPolls++;
+            long holdMs = Math.max(ttlMs, EMPTY_STANDBY_MIN_MS);
+            standbyUntilEpochMs = now + holdMs;
+            if (consecutiveEmptyPolls == 1) {
+                LOG.info("ecosystem: server appears empty; standby polling for {}s", holdMs / 1000L);
+            }
+        } else {
+            consecutiveEmptyPolls = 0;
+            standbyUntilEpochMs = 0L;
         }
         cache = new Cached(now, snap);
         return new SnapshotResult(snap, false, 0);
+    }
+
+    private static long failureBackoffMs(int failures) {
+        if (failures <= 1) {
+            return DOWN_STANDBY_BASE_MS;
+        }
+        long backoff = DOWN_STANDBY_BASE_MS;
+        for (int i = 1; i < failures; i++) {
+            backoff = Math.min(DOWN_STANDBY_MAX_MS, backoff * 2L);
+            if (backoff >= DOWN_STANDBY_MAX_MS) {
+                return DOWN_STANDBY_MAX_MS;
+            }
+        }
+        return backoff;
+    }
+
+    private static PopulationSnapshot standbySnapshot(String note) {
+        return new PopulationSnapshot(
+                0,
+                0,
+                0,
+                0,
+                java.util.Map.of(),
+                0,
+                0,
+                0,
+                0,
+                "None",
+                "None",
+                "None",
+                note,
+                ""
+        );
     }
 }

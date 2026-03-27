@@ -46,6 +46,7 @@ public final class IngameChatLogScheduler {
     private static final String KV_OFFSET = "ingame_chat_log_offset";
     private static final int MAX_READ_CHUNK = 4_000_000;
     private static final int MAX_DISCORD = 1_900;
+    private static final long ENTOMB_GUARD_WINDOW_MS = 30_000L;
 
     /**
      * UE / The Isle style prefix: {@code [YYYY.MM.DD-HH.MM.SS:mmm][thread]}.
@@ -73,6 +74,7 @@ public final class IngameChatLogScheduler {
             "(?i)LogTheIsleLeaveData:\\s*\\[[^\\]]+\\]\\s+(.+?)\\s+\\[(7656119\\d{10})\\]\\s*(.*)", Pattern.DOTALL);
 
     private static final Pattern STEAM_64 = Pattern.compile("(7656119\\d{10})");
+    private static final Pattern STEAM_64_STRICT = Pattern.compile("^7656119\\d{10}$");
 
     /** Leave / disconnect phrasing inside JoinData lines on some Evrima builds. */
     private static final Pattern LEAVE_HINT = Pattern.compile(
@@ -103,11 +105,14 @@ public final class IngameChatLogScheduler {
     /** Killer stats without {@code Dino:} prefix: {@code Species, Sex, growth - Killed the following player: …} */
     private static final Pattern KILL_PVP_NO_PREFIX = Pattern.compile(
             "(?is)^([^,]+),\\s*([^,]+),\\s*\\S+\\s*-\\s*Killed the following player:\\s*([^,]+),\\s*\\[7656119\\d{10}\\],\\s*Dino:\\s*([^,]+),\\s*Gender:\\s*([^,]+).*");
+    private static final Pattern ENTOMB_STEAM = Pattern.compile(
+            "(?i)LogTheIsleCharacter:.*\\[(7656119\\d{10})\\].*Used Ability:\\s*\\[ENTOMB\\]");
 
     private final LiveBotConfig live;
     private final Database database;
     private final RconService rcon;
     private final StringBuilder incompleteLine = new StringBuilder();
+    private final Map<String, Long> recentEntombEpochMs = new LinkedHashMap<>();
 
     public IngameChatLogScheduler(LiveBotConfig live, Database database, RconService rcon) {
         this.live = Objects.requireNonNull(live, "live");
@@ -229,8 +234,13 @@ public final class IngameChatLogScheduler {
             if (raw.isEmpty()) {
                 continue;
             }
+            recordEntomb(raw);
             if (purgeParkedOnKill && raw.contains("LogTheIsleKillData")) {
                 KillLogVictimSteam.extractVictimSteamId64(raw).ifPresent(sid -> {
+                    if (shouldIgnoreKillForEntomb(raw, sid)) {
+                        LOG.debug("dino_park: entomb guard skipped death-count/purge for SteamID {}", sid);
+                        return;
+                    }
                     try {
                         int r = database.applyPurgeOnKillForVictimSteam(sid, cfg.dinoParkPurgeOnKillDeathsPerSlot());
                         if (r == 1) {
@@ -249,6 +259,35 @@ public final class IngameChatLogScheduler {
             }
         }
         return out;
+    }
+
+    private void recordEntomb(String raw) {
+        Matcher m = ENTOMB_STEAM.matcher(raw);
+        if (!m.find()) {
+            return;
+        }
+        pruneOldEntombMarks(System.currentTimeMillis());
+        recentEntombEpochMs.put(m.group(1), System.currentTimeMillis());
+    }
+
+    private boolean shouldIgnoreKillForEntomb(String rawKill, String steamId64) {
+        if (steamId64 == null || steamId64.isBlank() || rawKill == null) {
+            return false;
+        }
+        if (!rawKill.toLowerCase(Locale.ROOT).contains("died from natural cause")) {
+            return false;
+        }
+        long now = System.currentTimeMillis();
+        pruneOldEntombMarks(now);
+        Long seen = recentEntombEpochMs.get(steamId64.trim());
+        return seen != null && now - seen <= ENTOMB_GUARD_WINDOW_MS;
+    }
+
+    private void pruneOldEntombMarks(long nowMs) {
+        if (recentEntombEpochMs.isEmpty()) {
+            return;
+        }
+        recentEntombEpochMs.entrySet().removeIf(e -> nowMs - e.getValue() > ENTOMB_GUARD_WINDOW_MS);
     }
 
     private static boolean lineMatchesAnyMarker(String raw, List<String> markers) {
@@ -321,8 +360,41 @@ public final class IngameChatLogScheduler {
         if (jl.isPresent()) {
             return truncateDiscord(jl.get());
         }
+        if (isJoinOrLeaveLogLine(t)) {
+            return "";
+        }
 
         return truncateDiscord(fallbackPrettyLog(t));
+    }
+
+    private static boolean isJoinOrLeaveLogLine(String stripped) {
+        String u = stripped.toLowerCase(Locale.ROOT);
+        return u.contains("logtheislejoindata") || u.contains("logtheisleleavedata");
+    }
+
+    /** Join/leave mirror only when the log line has a real display name and SteamID64 (skip {@code []} / missing id). */
+    private static boolean isValidJoinLeaveIdentity(String nameRaw, String steam64) {
+        if (steam64 == null || !STEAM_64_STRICT.matcher(steam64.trim()).matches()) {
+            return false;
+        }
+        return isUsableJoinLeaveDisplayName(nameRaw);
+    }
+
+    private static boolean isUsableJoinLeaveDisplayName(String nameRaw) {
+        if (nameRaw == null) {
+            return false;
+        }
+        String n = nameRaw.trim();
+        if (n.isEmpty()) {
+            return false;
+        }
+        if ("[]".equals(n)) {
+            return false;
+        }
+        if (n.matches("\\[\\s*\\]")) {
+            return false;
+        }
+        return true;
     }
 
     private static boolean useKillFlavor(BotConfig cfg) {
@@ -340,9 +412,14 @@ public final class IngameChatLogScheduler {
 
         Matcher leaveTag = LOG_LEAVE_DATA.matcher(stripped);
         if (leaveTag.matches()) {
+            String nameRaw = leaveTag.group(1).trim();
+            String steam = leaveTag.group(2).trim();
+            if (!isValidJoinLeaveIdentity(nameRaw, steam)) {
+                return Optional.empty();
+            }
             return Optional.of(buildJoinLeaveDiscord(
-                    leaveTag.group(1).trim(),
-                    leaveTag.group(2).trim(),
+                    nameRaw,
+                    steam,
                     leaveTag.group(3) == null ? "" : leaveTag.group(3).trim(),
                     true,
                     config));
@@ -353,6 +430,9 @@ public final class IngameChatLogScheduler {
             String nameRaw = joinTag.group(1).trim();
             String steam = joinTag.group(2).trim();
             String tail = joinTag.group(3) == null ? "" : joinTag.group(3).trim();
+            if (!isValidJoinLeaveIdentity(nameRaw, steam)) {
+                return Optional.empty();
+            }
             boolean asLeave = LEAVE_HINT.matcher(stripped).find() || LEAVE_HINT.matcher(tail).find();
             return Optional.of(buildJoinLeaveDiscord(nameRaw, steam, tail, asLeave, config));
         }
@@ -367,8 +447,11 @@ public final class IngameChatLogScheduler {
         if (nameGuess.length() > 80) {
             nameGuess = nameGuess.substring(0, 77) + "…";
         }
+        if (!isValidJoinLeaveIdentity(nameGuess, steam)) {
+            return Optional.empty();
+        }
         boolean leave = LEAVE_HINT.matcher(stripped).find();
-        return Optional.of(buildJoinLeaveDiscord(nameGuess.isEmpty() ? "Player" : nameGuess, steam, "", leave, config));
+        return Optional.of(buildJoinLeaveDiscord(nameGuess, steam, "", leave, config));
     }
 
     private static String buildJoinLeaveDiscord(

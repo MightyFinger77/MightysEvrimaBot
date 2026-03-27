@@ -44,14 +44,15 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.concurrent.ThreadLocalRandom;
 
 /**
  * Discord slash entrypoint. <b>Config persistence:</b> subcommands that alter settings defined in {@code config.yml}
  * must use {@link #applyYamlMutation} with {@link com.isle.evrima.bot.config.ConfigYamlUpdater} — never {@code bot_kv}
  * for those values. RCON-only admin actions and economy/link data are unaffected. **`/evrima-admin reload`**
- * calls {@link #reloadYamlFromDisk()} (config + taxonomy + kill-flavor + scheduler hooks). When adding reload-sensitive
- * components, extend {@link #applyYamlMutation} or {@link #reloadYamlFromDisk} as needed.
+ * calls {@link #reloadYamlFromDisk()} (config + taxonomy + kill-flavor + auto-messages + scheduler hooks). When adding reload-sensitive
+ * components, extend {@link #applyYamlMutation} or {@link #reloadYamlFromDisk()} as needed.
  */
 public final class BotListener extends ListenerAdapter {
 
@@ -64,6 +65,7 @@ public final class BotListener extends ListenerAdapter {
     private final PopulationDashboardService population;
     private final SpeciesPopulationControlScheduler speciesControl;
     private final ScheduledCorpseWipeScheduler corpseWipe;
+    private final AutoMessageScheduler autoMessageScheduler;
     private final SecureRandom secureRandom = new SecureRandom();
 
     public BotListener(
@@ -73,7 +75,8 @@ public final class BotListener extends ListenerAdapter {
             PermissionService permissions,
             PopulationDashboardService population,
             SpeciesPopulationControlScheduler speciesControl,
-            ScheduledCorpseWipeScheduler corpseWipe
+            ScheduledCorpseWipeScheduler corpseWipe,
+            AutoMessageScheduler autoMessageScheduler
     ) {
         this.live = live;
         this.database = database;
@@ -82,6 +85,7 @@ public final class BotListener extends ListenerAdapter {
         this.population = population;
         this.speciesControl = speciesControl;
         this.corpseWipe = corpseWipe;
+        this.autoMessageScheduler = autoMessageScheduler;
     }
 
     @Override
@@ -337,8 +341,8 @@ public final class BotListener extends ListenerAdapter {
                                 reloadYamlFromDisk();
                                 database.appendAudit(event.getUser().getId(), "admin_config_reload", "");
                                 hookEditEphemeral(hook,
-                                        "Reloaded **`config.yml`**, **`species-taxonomy.yml`**, and **`kill-flavor.yml`** (when kill flavor is on) from disk into memory.\n"
-                                                + "Schedulers still use intervals/channel IDs from process start — **restart the bot** if you changed "
+                                        "Reloaded **`config.yml`**, **`species-taxonomy.yml`**, **`kill-flavor.yml`** (when kill flavor is on), and **`auto-messages.yml`** from disk into memory.\n"
+                                                + "In-game auto-announce interval/mode/messages apply immediately; other schedulers may still need a **bot restart** if you changed "
                                                 + "`database.path`, Discord token, or poll/topic/dashboard timing.\n"
                                                 + "Role checks and RCON settings apply immediately for new operations.");
                             }
@@ -1007,7 +1011,9 @@ public final class BotListener extends ListenerAdapter {
                     int used = database.countParkedSlots(uid);
                     int extraOwned = database.getExtraParkingSlots(uid);
                     int cap = ps.capacityForPurchasedExtras(extraOwned);
-                    if (ps.enabled() && used >= cap) {
+                    OptionalLong overwriteIdOpt = database.findOwnedParkedIdByLabel(uid, label);
+                    boolean overwrite = overwriteIdOpt.isPresent();
+                    if (ps.enabled() && used >= cap && !overwrite) {
                         hook.editOriginal("Parking is full (**" + used + " / " + cap + "** slots). "
                                         + "Use `/evrima eco parking` for details, or `/evrima eco parking-buy` to spend points for more.")
                                 .queue();
@@ -1047,7 +1053,17 @@ public final class BotListener extends ListenerAdapter {
                         json = ParkedDinoPayload.buildJson(now, filtered, sum, diskCap);
                     }
 
-                    long id = database.insertParkedDino(uid, steamId, label, json);
+                    long id;
+                    if (overwrite) {
+                        id = overwriteIdOpt.getAsLong();
+                        boolean ok = database.overwriteParkedDino(id, uid, steamId, label, json, now);
+                        if (!ok) {
+                            hook.editOriginal("Could not overwrite existing slot. Please try again.").queue();
+                            return;
+                        }
+                    } else {
+                        id = database.insertParkedDino(uid, steamId, label, json);
+                    }
                     database.setParkSessionSlot(uid, id);
                     database.appendAudit(uid, "dino_park", String.valueOf(id));
                     String diskNote = diskCap.isPresent()
@@ -1059,12 +1075,14 @@ public final class BotListener extends ListenerAdapter {
                         diskNote = "\n\n_Parked from **server save file** only (no live `getplayerdata` text). Species line in lists may show “—” until you park in-game once._"
                                 + diskNote;
                     }
-                    hook.editOriginal("Parked **#" + id + "** — `" + truncate(label, 80) + "`\n**Snapshot:** "
+                    String verb = overwrite ? "Updated" : "Parked";
+                    hook.editOriginal(verb + " **#" + id + "** — `" + truncate(label, 80) + "`\n**Snapshot:** "
                                     + sum.oneLine()
                                     + diskNote
                                     + "\n\n_Use `/evrima dino retrieve` to show the snapshot and optionally write the server file (see config)._")
                             .queue();
-                    LOG.info("dino park: discordUserId={} steamId64={} slotId={} label=\"{}\" mode={} summary=\"{}\"",
+                    LOG.info("dino park {}: discordUserId={} steamId64={} slotId={} label=\"{}\" mode={} summary=\"{}\"",
+                            overwrite ? "overwrite" : "insert",
                             uid, steamId, id, label, diskOnly ? "disk_only" : "rcon", dinoSummaryForLog(sum.oneLine()));
                 } catch (SQLException e) {
                     LOG.warn("dino park db: {}", e.toString());
@@ -1213,7 +1231,7 @@ public final class BotListener extends ListenerAdapter {
     }
 
     /**
-     * Reloads {@code config.yml}, {@code species-taxonomy.yml}, and {@code kill-flavor.yml} (if flavor is enabled) — no process restart.
+     * Reloads {@code config.yml}, {@code species-taxonomy.yml}, {@code kill-flavor.yml}, and {@code auto-messages.yml} — no process restart.
      */
     private void reloadYamlFromDisk() throws IOException {
         synchronized (live) {
@@ -1222,6 +1240,7 @@ public final class BotListener extends ListenerAdapter {
             speciesControl.invalidateConfigCache();
             corpseWipe.onConfigReloaded();
         }
+        autoMessageScheduler.restart();
     }
 
     private void appendFilteredGetplayerdataForWhois(StringBuilder sb, String steamId64) {

@@ -338,6 +338,69 @@ public final class Database implements AutoCloseable {
         return -1L;
     }
 
+    /** Most recent owned slot id whose label matches case-insensitively after trim. */
+    public OptionalLong findOwnedParkedIdByLabel(String discordUserId, String label) throws SQLException {
+        if (discordUserId == null || discordUserId.isBlank() || label == null) {
+            return OptionalLong.empty();
+        }
+        String wanted = label.trim();
+        if (wanted.isEmpty()) {
+            return OptionalLong.empty();
+        }
+        try (Connection c = open();
+             PreparedStatement ps = c.prepareStatement("""
+                     SELECT id
+                     FROM parked_dinos
+                     WHERE discord_user_id = ?
+                       AND lower(trim(coalesce(label, ''))) = lower(trim(?))
+                     ORDER BY id DESC
+                     LIMIT 1
+                     """)) {
+            ps.setString(1, discordUserId);
+            ps.setString(2, wanted);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    return OptionalLong.of(rs.getLong(1));
+                }
+            }
+        }
+        return OptionalLong.empty();
+    }
+
+    /**
+     * Overwrites an owned slot in place (same id) with fresh snapshot values.
+     *
+     * @return true if exactly one row updated
+     */
+    public boolean overwriteParkedDino(
+            long id,
+            String discordUserId,
+            String steamId64,
+            String label,
+            String payloadJson,
+            long parkedAtEpochSec
+    ) throws SQLException {
+        try (Connection c = open();
+             PreparedStatement ps = c.prepareStatement("""
+                     UPDATE parked_dinos
+                     SET steam_id64 = ?, label = ?, payload_json = ?, parked_at_epoch_sec = ?
+                     WHERE id = ? AND discord_user_id = ?
+                     """)) {
+            ps.setString(1, steamId64);
+            ps.setString(2, label);
+            ps.setString(3, payloadJson);
+            ps.setLong(4, parkedAtEpochSec);
+            ps.setLong(5, id);
+            ps.setString(6, discordUserId);
+            boolean ok = ps.executeUpdate() == 1;
+            if (ok) {
+                // Overwrite should behave like "fresh park" for per-slot counters.
+                clearParkSlotAuxiliaryKv(discordUserId, id);
+            }
+            return ok;
+        }
+    }
+
     public List<ParkedRow> listParked(String discordUserId) throws SQLException {
         List<ParkedRow> rows = new ArrayList<>();
         try (Connection c = open();

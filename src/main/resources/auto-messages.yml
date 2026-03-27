@@ -1,0 +1,14 @@
+# Rotating in-game announcements (RCON `announce`), MightyTips-style. Beside config.yml.
+# Reload without bot restart: /evrima-admin reload (also reloads this file).
+
+enabled: false
+
+# Seconds between announces (clamped 10–604800).
+interval_seconds: 300
+
+# sequential — same order every cycle. random — shuffled; each line once per full cycle before reshuffling.
+mode: sequential
+
+messages:
+  - "Welcome — mind the rules and have fun."
+  - "Need help? Ask staff in global chat."

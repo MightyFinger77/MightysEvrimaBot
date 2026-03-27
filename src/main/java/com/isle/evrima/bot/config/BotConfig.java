@@ -109,6 +109,8 @@ public final class BotConfig {
     private final DinoParkPlayerdataFile dinoParkPlayerdataFile;
     private final DinoParkLogoutAutosaveConfig dinoParkLogoutAutosave;
     private final EconomyParkingSlotsConfig economyParkingSlots;
+    /** MightyTips-style in-game RCON {@code announce} rotation; from {@code auto-messages.yml} beside {@code config.yml}. */
+    private final AutoMessagesConfig autoMessages;
 
     public BotConfig(
             String discordToken,
@@ -166,6 +168,7 @@ public final class BotConfig {
             DinoParkPlayerdataFile dinoParkPlayerdataFile,
             DinoParkLogoutAutosaveConfig dinoParkLogoutAutosave,
             EconomyParkingSlotsConfig economyParkingSlots,
+            AutoMessagesConfig autoMessages,
             Path configYamlPath
     ) {
         this.discordToken = discordToken;
@@ -246,6 +249,7 @@ public final class BotConfig {
                 ? DinoParkLogoutAutosaveConfig.DISABLED
                 : dinoParkLogoutAutosave;
         this.economyParkingSlots = economyParkingSlots != null ? economyParkingSlots : EconomyParkingSlotsConfig.DISABLED;
+        this.autoMessages = autoMessages != null ? autoMessages : AutoMessagesConfig.DISABLED;
     }
 
     @SuppressWarnings("unchecked")
@@ -466,6 +470,8 @@ public final class BotConfig {
         DinoParkLogoutAutosaveConfig loCfg =
                 new DinoParkLogoutAutosaveConfig(loEn, loSoft, loHard, loHardDelay);
 
+        AutoMessagesConfig autoMsg = AutoMessagesConfig.loadBesideConfig(yamlFile);
+
         return new BotConfig(
                 token,
                 guildId,
@@ -522,6 +528,7 @@ public final class BotConfig {
                 dinoParkPdf,
                 loCfg,
                 economyParkingSlots,
+                autoMsg,
                 yamlFile.toAbsolutePath().normalize()
         );
     }
@@ -1045,5 +1052,9 @@ public final class BotConfig {
 
     public DinoParkLogoutAutosaveConfig dinoParkLogoutAutosave() {
         return dinoParkLogoutAutosave;
+    }
+
+    public AutoMessagesConfig autoMessages() {
+        return autoMessages;
     }
 }
