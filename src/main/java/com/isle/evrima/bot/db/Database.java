@@ -726,6 +726,19 @@ public final class Database implements AutoCloseable {
         }
     }
 
+    /** True if this Discord account already has at least one parking slot for the given SteamID64. */
+    public boolean existsParkedForDiscordAndSteam(String discordUserId, String steamId64) throws SQLException {
+        try (Connection c = open();
+             PreparedStatement ps = c.prepareStatement(
+                     "SELECT 1 FROM parked_dinos WHERE discord_user_id = ? AND steam_id64 = ? LIMIT 1")) {
+            ps.setString(1, discordUserId);
+            ps.setString(2, steamId64);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        }
+    }
+
     /**
      * Updates payload and timestamp for an owned slot (logout autosave).
      *

@@ -21,6 +21,8 @@ import com.isle.evrima.bot.schedule.SpeciesPopulationControlScheduler;
 import com.isle.evrima.bot.security.PermissionService;
 import com.isle.evrima.bot.security.StaffTier;
 import net.dv8tion.jda.api.JDA;
+import net.dv8tion.jda.api.requests.ErrorResponse;
+import net.dv8tion.jda.api.exceptions.ErrorResponseException;
 import net.dv8tion.jda.api.entities.Member;
 import net.dv8tion.jda.api.entities.MessageEmbed;
 import net.dv8tion.jda.api.entities.User;
@@ -647,7 +649,20 @@ public final class BotListener extends ListenerAdapter {
                         hookEditEphemeral(hook, truncate(e.getMessage(), 2000));
                     }
                 },
-                f -> LOG.error("deferReply (evrima-admin) failed", f));
+                f -> logDeferReplyFailure("evrima-admin", f));
+    }
+
+    /**
+     * Discord returns {@link ErrorResponse#UNKNOWN_INTERACTION} (10062) when the interaction token is no longer valid —
+     * often two JVMs using the same bot token (first process acknowledges), or acknowledgement after the 3s window.
+     */
+    private static void logDeferReplyFailure(String context, Throwable f) {
+        if (f instanceof ErrorResponseException ere && ere.getErrorResponse() == ErrorResponse.UNKNOWN_INTERACTION) {
+            LOG.warn("{}: deferReply failed — Unknown interaction (10062). If two bot copies use the same token, stop the extra process or use a separate Discord application per instance. Otherwise see https://jda.wiki/using-jda/troubleshooting/",
+                    context);
+        } else {
+            LOG.error("{}: deferReply failed", context, f);
+        }
     }
 
     private void handleMod(SlashCommandInteractionEvent event, String sub) {

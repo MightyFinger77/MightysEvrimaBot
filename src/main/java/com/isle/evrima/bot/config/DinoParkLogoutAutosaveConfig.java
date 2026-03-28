@@ -3,7 +3,8 @@ package com.isle.evrima.bot.config;
 import java.util.List;
 
 /**
- * {@code dino_park.logout_autosave} — refresh a parked slot from live server state when log lines match.
+ * {@code dino_park.logout_autosave} — refresh an <b>existing</b> parking slot when log lines match.
+ * Only applies when the SteamID is linked in the bot and the user already has a {@code /evrima dino park} row for that SteamID.
  * <p>
  * Soft logout lines refresh immediately. Hard-disconnect lines schedule a delayed refresh after
  * {@link #hardDisconnectDelaySeconds()} (seconds). If that value is {@code 0}, the scheduler uses {@code 300} instead

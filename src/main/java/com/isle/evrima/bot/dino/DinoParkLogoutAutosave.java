@@ -24,7 +24,9 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Updates the player’s “session” parking slot when TheIsle.log lines match configured substrings.
+ * Refreshes an <b>existing</b> parking slot from live server state when TheIsle.log lines match.
+ * Only runs for SteamIDs whose linked Discord user already has a {@code parked_dinos} row for that SteamID
+ * (no scheduling or RCON for players who have never used {@code /evrima dino park} for this character).
  */
 public final class DinoParkLogoutAutosave {
 
@@ -59,6 +61,9 @@ public final class DinoParkLogoutAutosave {
             if (soft) {
                 String steam = steamOpt.get();
                 cancelHardDelay(steam);
+                if (!eligibleForLogoutAutosave(db, steam)) {
+                    return;
+                }
                 tryRefreshSlot(steam, live.get(), db, rcon);
             }
 
@@ -69,6 +74,9 @@ public final class DinoParkLogoutAutosave {
                     return;
                 }
                 String steam = steamOpt.get();
+                if (!eligibleForLogoutAutosave(db, steam)) {
+                    return;
+                }
                 int delaySec = ac.hardDisconnectDelaySeconds() > 0
                         ? ac.hardDisconnectDelaySeconds()
                         : HARD_DELAY_FALLBACK_SECONDS;
@@ -108,6 +116,9 @@ public final class DinoParkLogoutAutosave {
                 if (!cfg.dinoParkLogoutAutosave().enabled()) {
                     return;
                 }
+                if (!eligibleForLogoutAutosave(db, steam)) {
+                    return;
+                }
                 tryRefreshSlot(steam, cfg, db, rcon);
             } catch (SQLException | IOException e) {
                 LOG.warn("dino_park logout_autosave (delayed hard): {}", e.toString());
@@ -120,6 +131,15 @@ public final class DinoParkLogoutAutosave {
     private static Optional<String> firstSteam64(String line) {
         Matcher m = STEAM.matcher(line);
         return m.find() ? Optional.of(m.group(1)) : Optional.empty();
+    }
+
+    /** Linked Discord account must already have a parking slot stored for this SteamID. */
+    private static boolean eligibleForLogoutAutosave(Database db, String steamId64) throws SQLException {
+        Optional<String> discord = db.findDiscordForSteam(steamId64);
+        if (discord.isEmpty()) {
+            return false;
+        }
+        return db.existsParkedForDiscordAndSteam(discord.get(), steamId64);
     }
 
     private static boolean lineMatchesAny(String raw, List<String> markers) {
